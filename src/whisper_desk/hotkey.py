@@ -34,7 +34,7 @@ class UnsupportedDesktop(RuntimeError):
 
 MODIFIER_NAMES = {
     "super": "super", "cmd": "super", "command": "super", "meta": "super",
-    "win": "super", "windows": "super",
+    "win": "super", "windows": "super", "mod4": "super",
     "ctrl": "ctrl", "control": "ctrl", "primary": "ctrl",
     "alt": "alt", "option": "alt", "opt": "alt",
     "shift": "shift",
@@ -82,6 +82,14 @@ def default_binding() -> str:
 def resolve_binding(config: dict[str, Any]) -> str:
     binding = str(config["hotkey"]["binding"]).strip()
     return default_binding() if not binding or binding.lower() == "auto" else binding
+
+
+def label(binding: str) -> str:
+    """"<Super>j" → "Super+J": the shortcut as the user reads it on their keyboard."""
+    modifiers, key = parse_binding(binding)
+    keycaps = {"super": "Cmd", "alt": "Option"} if host.is_macos() else {}
+    names = [keycaps.get(modifier, modifier.capitalize()) for modifier in modifiers]
+    return "+".join([*names, key.upper() if len(key) == 1 else key.capitalize()])
 
 
 # -- GNOME --------------------------------------------------------------------

@@ -1,7 +1,8 @@
 """Daemon: keeps the model in memory and runs dictations on demand.
 
 Protocol: one JSON request per line on a Unix socket, one JSON response per
-line. Commands: toggle, record, stop, status, reload, quit.
+line. Commands: toggle, record, stop, status, reload, load, insert, pause,
+resume, quit.
 """
 
 from __future__ import annotations
@@ -13,11 +14,12 @@ import queue
 import socket
 import socketserver
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from . import config as config_module
-from . import host
+from . import history, host, hotkey, inject
 from . import output
 from .capture import CaptureUnavailable
 from .overlay_proc import OverlayProcess
@@ -25,6 +27,16 @@ from .recorder import SILENT_INPUT_PEAK, Recorder
 from .transcriber import Transcriber
 
 logger = logging.getLogger("whisper-desk.daemon")
+
+# How often the download gauge is refreshed while the model arrives.
+PROGRESS_SECONDS = 0.25
+# Reinserting from the history: the window that asked must have closed and
+# handed the focus back, and the virtual keyboard be seen by the compositor.
+INSERT_DELAY_SECONDS = 0.6
+
+
+class ModelUnavailable(RuntimeError):
+    """The model could neither be downloaded nor loaded."""
 
 
 def socket_path() -> Path:
@@ -57,9 +69,12 @@ class Session:
         self.cancelled = threading.Event()
         self.text = ""
         self.error: str | None = None
+        # Why the text did not reach the cursor: CursorWriter.failure.
+        self.delivery_failure = ""
         self.parts: list[str] = []
+        self.listened = 0.0             # seconds the microphone stayed open
         self.queue: queue.Queue[bytes | None] = queue.Queue()
-        self.overlay = OverlayProcess(service.config)
+        self.overlay = OverlayProcess(service.config, on_event=self._on_overlay_event)
         self.recorder = Recorder(
             service.config,
             on_level=self._on_level,
@@ -71,17 +86,32 @@ class Session:
     def _on_level(self, level: float, bands: list[float]) -> None:
         self.overlay.set_level(level, bands)
 
+    def _on_overlay_event(self, event: str) -> None:
+        if event == "cancel":
+            # Out of the window's reading thread: cancelling closes that window.
+            threading.Thread(target=self.service.cancel, args=(self,), daemon=True).start()
+
+    def _hint(self) -> str:
+        """How to end the dictation, in the words of the user's keyboard."""
+        binding = hotkey.label(hotkey.resolve_binding(self.service.config))
+        return f"{binding} to finish"
+
     def run(self) -> None:
         try:
-            self.overlay.start()
+            ready = self.service.transcriber.is_loaded
+            self.overlay.start("listening" if ready else "loading", hint=self._hint())
             if not self.capture and "cursor" in output.modes(self.service.config):
                 self.writer = output.CursorWriter(self.service.config, self.overlay)
                 # While the user speaks, the virtual keyboard is being prepared.
                 threading.Thread(target=self.writer.prepare, daemon=True).start()
+            if not ready and not self._wait_for_model():
+                return
             worker = threading.Thread(target=self._transcribe_loop, daemon=True)
             worker.start()
 
+            started = time.monotonic()
             tail = self.recorder.record()
+            self.listened = time.monotonic() - started
             self.recording_over.set()
             if tail:
                 self.queue.put(tail)
@@ -91,23 +121,122 @@ class Session:
             self.overlay.set_state("working")
             worker.join()
             self.text = " ".join(self.parts)
-            if not self.parts and not self.cancelled.is_set():
-                self._report_silence()
+            self._conclude()
         except CaptureUnavailable as error:
             # A tool to install, not a bug: no need to spread out a traceback.
             self.error = str(error)
             logger.error("Capture impossible: %s", error)
-            output.notify("whisper-desk: unusable microphone", str(error))
+            self._fail("Microphone unavailable", str(error))
+        except ModelUnavailable as error:
+            self.error = str(error)
+            self._fail("The model could not be loaded", str(error))
         except Exception as error:  # the daemon must never die on a dictation
             self.error = str(error)
             logger.exception("Dictation failed")
-            output.notify("whisper-desk", f"Error: {error}")
+            self._fail("Something went wrong", str(error))
         finally:
+            self._remember()
             if self.writer:
                 self.writer.close()
             self.overlay.stop()
             self.service.finish(self)
             self.done.set()
+
+    def _remember(self) -> None:
+        """One history entry per dictation — what was inserted, even if cut short."""
+        settings = self.service.config["output"]
+        if self.capture or not self.parts or not settings["history"]:
+            return
+        history.append(
+            " ".join(self.parts),
+            duration=self.listened,
+            model=self.service.transcriber.model_name,
+            keep_days=int(settings["history_days"]),
+        )
+
+    def _wait_for_model(self) -> bool:
+        """Shows the model arriving, and only opens the microphone once it is there.
+
+        Listening while the model downloads would ask the user to speak into
+        a void for minutes: better to say plainly what is being waited for.
+        False if the dictation was dropped in the meantime.
+        """
+        self.service.state = "loading"
+        transcriber = self.service.transcriber
+        downloading = not transcriber.is_downloaded
+        verb = "Downloading" if downloading else "Loading"
+        self.overlay.set_state("loading", f"{verb} the {transcriber.model_name} model")
+        if downloading and not self.overlay.alive:
+            # Without a window, minutes of silence would pass for a failure.
+            output.notify(
+                f"whisper-desk: downloading the {transcriber.model_name} model",
+                "Listening starts once it is there.",
+            )
+        failure: list[BaseException] = []
+
+        def load() -> None:
+            try:
+                transcriber.load()
+            except Exception as error:
+                logger.exception("Cannot load the model")
+                failure.append(error)
+
+        loader = threading.Thread(target=load, daemon=True)
+        loader.start()
+        while loader.is_alive():
+            if self.stopping.is_set() or self.cancelled.is_set():
+                # The model keeps loading in the background, for the next time.
+                self._cancelled_display()
+                return False
+            if downloading:
+                progress = transcriber.download_progress()
+                if progress is not None:
+                    self.overlay.set_progress(progress)
+            loader.join(PROGRESS_SECONDS)
+        if failure:
+            raise ModelUnavailable(str(failure[0]))
+        self.service.state = "recording"
+        self.overlay.set_state("listening")
+        return True
+
+    def _conclude(self) -> None:
+        """The last word of the window: what became of the dictation."""
+        if self.cancelled.is_set():
+            return  # already said by cancel()
+        if self.error:
+            self._fail("Transcription failed", self.error)
+        elif not self.parts:
+            self._report_silence()
+        elif self.delivery_failure == "keyboard":
+            paste = "+".join(key.capitalize() for key in inject.resolve_shortcut(
+                str(self.service.config["output"]["paste_shortcut"])
+            ))
+            self._fail("The text could not be typed", f"It is in the clipboard: paste it with {paste}")
+        elif self.delivery_failure:
+            self._fail("The text could not be inserted", "No clipboard answered — see whisper-desk doctor")
+        else:
+            self.overlay.set_state("done", self.text, self._done_detail())
+
+    def _done_detail(self) -> str:
+        if self.capture:
+            return "Transcribed"
+        selected = output.modes(self.service.config)
+        if "cursor" in selected:
+            return "Inserted at the cursor"
+        if "clipboard" in selected:
+            return "Copied to the clipboard"
+        return "Transcribed"
+
+    def _fail(self, title: str, detail: str) -> None:
+        """An error the user reads on the window — or in a notification, without one."""
+        if self.overlay.alive:
+            self.overlay.set_state("error", title, detail)
+        else:
+            output.notify(f"whisper-desk: {title[0].lower()}{title[1:]}", detail)
+
+    def _cancelled_display(self) -> None:
+        detail = "What was already inserted stays" if self.parts else "Nothing was inserted"
+        self.overlay.set_state("cancelled", "Dictation cancelled", detail)
 
     def _report_silence(self) -> None:
         """An empty dictation: tell the user's silence apart from a mute microphone."""
@@ -119,14 +248,17 @@ class Session:
                 "device or wrong default source; see 'whisper-desk doctor'.",
                 device, self.recorder.backend or "?", peak,
             )
-            output.notify(
-                "whisper-desk: mute microphone",
-                f"No sound is coming from device '{device}'.",
-            )
+            self._fail("The microphone is silent", f"No sound from device '{device}' — see whisper-desk doctor")
         else:
             logger.info(
                 "No speech detected (%s, peak %.0f).", self.recorder.reason, peak
             )
+            timeout = float(self.service.config["recording"]["start_timeout_seconds"])
+            detail = (
+                f"Nothing was said within {timeout:g} s"
+                if self.recorder.reason == "no-speech" else "No speech was recognised"
+            )
+            self._fail("Nothing heard", detail)
 
     def _transcribe_loop(self) -> None:
         """Transcribes the sentences in order, as they come in."""
@@ -153,13 +285,18 @@ class Session:
                 continue
             # Later sentences are separated from the previous insertion by a space.
             self.parts.append(text)
+            self.overlay.set_text(text)
             if not self.capture:
-                output.deliver(
+                delivered = output.deliver(
                     text if len(self.parts) == 1 else f" {text}",
                     self.service.config,
                     writer=self.writer,
                     overlay=self.overlay,
                 )
+                if not delivered and not self.delivery_failure:
+                    self.delivery_failure = (
+                        self.writer.failure if self.writer and self.writer.failure else "clipboard"
+                    )
 
     def stop(self) -> None:
         self.stopping.set()
@@ -179,6 +316,7 @@ class Session:
         self.queue.put(None)      # wakes the transcription up at once
         # The sentence in progress cannot be interrupted inside the model: the
         # window is closed here so the shortcut is seen to have answered.
+        self._cancelled_display()
         self.overlay.stop()
 
     def give_up(self) -> None:
@@ -219,6 +357,8 @@ class Service:
         self.state = "idle"
         self.session: Session | None = None
         self.lock = threading.Lock()
+        # Paused from the tray: the shortcut says so instead of listening.
+        self.paused = False
 
     # -- commands ----------------------------------------------------------
     def toggle(self) -> dict[str, Any]:
@@ -232,6 +372,9 @@ class Service:
         """
         with self.lock:
             session = self.session
+            if session is None and self.paused:
+                threading.Thread(target=self._show_paused, daemon=True).start()
+                return {"state": "paused"}
             if session is None:
                 self._start(capture=False)
                 return {"state": "recording"}
@@ -244,6 +387,38 @@ class Service:
             session.give_up()
             self._forget(session)
             return {"state": "idle", "given_up": True}
+
+    def cancel(self, session: Session) -> None:
+        """Esc or a click on the window: the same cut as the shortcut's second step."""
+        with self.lock:
+            if self.session is session and not session.cancelled.is_set():
+                session.cancel()
+
+    def insert(self, text: str) -> dict[str, Any]:
+        """Types a text at the cursor again — a dictation brought back from the history."""
+        if not text.strip():
+            return {"error": "nothing to insert"}
+        with self.lock:
+            if self.state != "idle":
+                return {"error": f"busy ({self.state})"}
+        threading.Thread(target=self._insert, args=(text,), daemon=True).start()
+        return {"inserting": True}
+
+    def _insert(self, text: str) -> None:
+        writer = output.CursorWriter(self.config)
+        try:
+            writer.prepare()
+            time.sleep(INSERT_DELAY_SECONDS)
+            if not writer.write(text):
+                output.notify(
+                    "whisper-desk: the text could not be inserted",
+                    "It is in the clipboard." if writer.failure == "keyboard"
+                    else "No clipboard answered — see whisper-desk doctor.",
+                )
+        except Exception:
+            logger.exception("Reinsertion failed")
+        finally:
+            writer.close()
 
     def record(self) -> dict[str, Any]:
         with self.lock:
@@ -263,20 +438,58 @@ class Service:
             return {"state": self.state}
 
     def status(self) -> dict[str, Any]:
+        transcriber = self.transcriber
+        loaded = transcriber.is_loaded
+        downloading = transcriber.loading and not transcriber.is_downloaded
         return {
             "state": self.state,
             "host": host.name(),
             "model": self.transcriber.model_name,
             "device": self.transcriber.device,
             "compute_type": self.transcriber.compute_type,
-            "loaded": self.transcriber.is_loaded,
+            "loaded": loaded,
+            # What the tray and the welcome window show without asking twice.
+            "microphone": str(self.config["recording"]["device"]),
+            "paused": self.paused,
+            "loading": transcriber.loading,
+            "download": transcriber.download_progress() if downloading else None,
+            "load_error": transcriber.error,
         }
+
+    def load(self) -> dict[str, Any]:
+        """Loads — and first downloads — the model now, rather than at the first dictation."""
+        if not self.transcriber.is_loaded:
+            threading.Thread(target=self._preload, daemon=True).start()
+        return {"loaded": self.transcriber.is_loaded}
+
+    def pause(self) -> dict[str, Any]:
+        self.paused = True
+        return {"paused": True}
+
+    def resume(self) -> dict[str, Any]:
+        self.paused = False
+        return {"paused": False}
+
+    def _show_paused(self) -> None:
+        """The shortcut pressed while paused: say it, rather than ignore it."""
+        title, detail = "whisper-desk is paused", "Resume it from the tray, or: whisper-desk resume"
+        overlay = OverlayProcess(self.config)
+        overlay.start("paused")
+        if overlay.alive:
+            overlay.set_state("paused", title, detail)
+            overlay.stop()
+        else:
+            output.notify(title, detail)
 
     def reload(self) -> dict[str, Any]:
         with self.lock:
             if self.state != "idle":
                 return {"error": f"busy ({self.state})"}
-            self.config = config_module.load()
+            previous, self.config = self.config, config_module.load()
+            # A colour or a history setting is no reason to drop a model that
+            # took seconds — or minutes — to load.
+            if self.config["model"] == previous["model"]:
+                return {"reloaded": True}
             self.transcriber = Transcriber(self.config)
             if self.config["model"]["preload"]:
                 threading.Thread(target=self._preload, daemon=True).start()
@@ -329,6 +542,10 @@ class Handler(socketserver.StreamRequestHandler):
                 "stop": self.service.stop,
                 "status": self.service.status,
                 "reload": self.service.reload,
+                "insert": lambda: self.service.insert(str(request.get("text", ""))),
+                "load": self.service.load,
+                "pause": self.service.pause,
+                "resume": self.service.resume,
                 "ping": lambda: {"pong": True},
             }
             if command == "quit":

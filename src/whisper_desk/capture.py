@@ -8,7 +8,9 @@ present everywhere — arecord comes from ALSA (Linux), parec from PulseAudio
 
 from __future__ import annotations
 
+import re
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -161,3 +163,92 @@ def choose(preferred: str = "auto") -> str:
 def build(device: str, rate: int, channels: int, backend: str = "auto") -> Capture:
     """The capture command, ready for Popen."""
     return BUILDERS[choose(backend)](device, rate, channels)
+
+
+# -- listing the microphones ----------------------------------------------------
+#
+# A device name only means something to the tool that captures through it: an
+# ALSA name for arecord, a PulseAudio source for parec, an index for
+# avfoundation. The list offered is therefore the chosen tool's own.
+
+DEFAULT_DEVICE = ("default", "Default microphone")
+# ALSA names worth offering: the others (dmix, dsnoop, surround…) are plumbing.
+ALSA_KEPT = ("pipewire", "pulse", "sysdefault:", "plughw:")
+
+
+def parse_arecord(listing: str) -> list[tuple[str, str]]:
+    """`arecord -L` → [(name, description)], the plumbing left out."""
+    devices: list[tuple[str, str]] = []
+    name, lines = "", []
+    for raw in [*listing.splitlines(), ""]:
+        if raw and raw[0].isspace():
+            lines.append(raw.strip().rstrip(","))
+            continue
+        if name and name.startswith(ALSA_KEPT):
+            description = lines[0] if lines else name
+            device = re.search(r"DEV=(\d+)", name)
+            if name.startswith("plughw:") and device:
+                description = f"{description} — device {device.group(1)}"
+            devices.append((name, description))
+        name, lines = raw.strip(), []
+    return devices
+
+
+def parse_pactl(listing: str) -> list[tuple[str, str]]:
+    """`pactl list sources` → [(name, description)], without the speaker monitors."""
+    devices: list[tuple[str, str]] = []
+    name = ""
+    for raw in listing.splitlines():
+        line = raw.strip()
+        if line.startswith("Name:"):
+            name = line.partition(":")[2].strip()
+        elif line.startswith("Description:") and name:
+            if not name.endswith(".monitor"):
+                devices.append((name, line.partition(":")[2].strip()))
+            name = ""
+    return devices
+
+
+def parse_avfoundation(listing: str) -> list[tuple[str, str]]:
+    """`ffmpeg -f avfoundation -list_devices true -i ""` → [(":index", name)]."""
+    devices: list[tuple[str, str]] = []
+    audio = False
+    for line in listing.splitlines():
+        if "AVFoundation audio devices" in line:
+            audio = True
+            continue
+        if "AVFoundation video devices" in line:
+            audio = False
+            continue
+        match = re.search(r"\]\s*\[(\d+)\]\s*(.+)$", line)
+        if audio and match:
+            devices.append((f":{match.group(1)}", match.group(2).strip()))
+    return devices
+
+
+def _listing(command: list[str], stderr: bool = False) -> str:
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return (result.stderr if stderr else result.stdout).decode("utf-8", "replace")
+
+
+def devices(backend: str = "auto") -> list[tuple[str, str]]:
+    """The microphones the capture tool can open, "default" first."""
+    try:
+        chosen = choose(backend)
+    except CaptureUnavailable:
+        return [DEFAULT_DEVICE]
+    found: list[tuple[str, str]] = []
+    if chosen == "arecord":
+        found = parse_arecord(_listing(["arecord", "-L"]))
+    elif chosen == "parec" or (chosen == "ffmpeg" and not host.is_macos()):
+        if shutil.which("pactl"):
+            found = parse_pactl(_listing(["pactl", "list", "sources"]))
+    elif chosen == "ffmpeg":
+        found = parse_avfoundation(_listing(
+            ["ffmpeg", "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+            stderr=True,
+        ))
+    return [DEFAULT_DEVICE, *[device for device in found if device[0] != "default"]]

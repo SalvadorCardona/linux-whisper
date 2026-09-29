@@ -80,7 +80,7 @@ def cmd_simple(command: str):
 
         try:
             # Querying or stopping the daemon must not bring it to life.
-            reply = send(command, timeout=30, autostart=command not in ("status", "quit"))
+            reply = send(command, timeout=30, autostart=command not in ("status", "quit", "pause", "resume"))
         except DaemonUnavailable as error:
             return _print_error(str(error))
         print(json.dumps(reply, ensure_ascii=False))
@@ -126,6 +126,137 @@ def cmd_config(args: argparse.Namespace) -> int:
     editor = os.environ.get("EDITOR") or shutil.which("nano") or "vi"
     subprocess.run([editor, str(path)], check=False)
     print("Remember to run 'whisper-desk reload' to apply the changes.")
+    return 0
+
+
+def _history_line(number: int, entry, width: int | None) -> str:
+    """One dictation on one line: number, date, duration, model, then the text."""
+    stamp = entry.date.replace("T", " ")[:16]
+    duration = f"{entry.duration:5.1f} s" if entry.duration is not None else " " * 7
+    head = f"{number:>4}  {stamp}  {duration}  {(entry.model or '-'):<14}  "
+    text = " ".join(entry.text.split())
+    if width and len(head) + len(text) > width:
+        text = text[: max(width - len(head) - 1, 10)] + "…"
+    return head + text
+
+
+def cmd_history(args: argparse.Namespace) -> int:
+    """Past dictations: list, search, copy, delete — or the window that does it all."""
+    from . import history, output
+
+    config = config_module.load()
+    if args.window:
+        from . import history_proc, window_proc
+        from .client import send
+
+        controller = history_proc.HistoryController(
+            config, copy=lambda text: output.copy(text), send=send
+        )
+        try:
+            history_proc.open_window(controller)
+        except window_proc.WindowUnavailable as error:
+            return _print_error(f"{error} — 'whisper-desk history' lists them here instead")
+        return 0
+
+    if args.keep_days is not None:
+        days = max(args.keep_days, 0)
+        config_module.update({"output": {"history_days": days}})
+        removed = history.purge(days)
+        print("Dictations are kept forever." if days == 0 else
+              f"Dictations older than {days} days are deleted ({removed} removed now).")
+        print("Run 'whisper-desk reload' for the daemon to apply it.")
+        return 0
+    if args.clear:
+        print(f"{history.clear()} dictation(s) deleted.")
+        return 0
+
+    entries = history.load()
+    for number in (args.copy, args.delete):
+        if number is not None and not 1 <= number <= len(entries):
+            return _print_error(f"no dictation number {number} — there are {len(entries)}")
+    if args.copy is not None:
+        entry = entries[history.index_of(args.copy, entries)]
+        if not output.copy(entry.text):
+            return _print_error("no clipboard tool answered — see 'whisper-desk doctor'")
+        print(f"Copied: {entry.text}")
+        return 0
+    if args.delete is not None:
+        entry = entries[history.index_of(args.delete, entries)]
+        if not history.delete(entry):
+            return _print_error("that dictation is no longer in the history")
+        print(f"Deleted: {entry.text}")
+        return 0
+
+    query = " ".join(args.query)
+    shown = [
+        (number, entry) for number, entry in history.numbered(entries)
+        if not query or history.matches(entry, query)
+    ]
+    if args.limit > 0:
+        shown = shown[: args.limit]
+    if not shown:
+        print("No dictation matches." if query else "No dictation yet.")
+        return 0
+    width = shutil.get_terminal_size().columns if sys.stdout.isatty() else None
+    # The oldest at the top, the latest just above the prompt.
+    for number, entry in reversed(shown):
+        print(_history_line(number, entry, width))
+    return 0
+
+
+def cmd_settings(_args: argparse.Namespace) -> int:
+    """The settings window: the essentials of config.toml without opening it."""
+    from . import settings_proc, window_proc
+    from .client import send
+
+    try:
+        settings_proc.open_window(config_module.load(), f"{BIN} toggle", send)
+    except window_proc.WindowUnavailable as error:
+        return _print_error(f"{error} — 'whisper-desk config' opens the file instead")
+    return 0
+
+
+def cmd_welcome(args: argparse.Namespace) -> int:
+    """The first launch, step by step: microphone, model, download, a first dictation."""
+    from . import welcome_proc, window_proc
+    from .client import send
+
+    if args.if_first and welcome_proc.welcomed():
+        return 0
+    try:
+        welcome_proc.open_window(config_module.load(), f"{BIN} toggle", send)
+    except window_proc.WindowUnavailable as error:
+        # Without GTK, the terminal is the welcome: say where things are.
+        welcome_proc.mark_welcomed()
+        return _print_error(
+            f"{error} — dictate with the shortcut, and see 'whisper-desk doctor' if it stays silent"
+        )
+    return 0
+
+
+def cmd_tray(_args: argparse.Namespace) -> int:
+    """The tray indicator: state of the service, dictation, history, settings, pause."""
+    from . import tray_proc, window_proc
+    from .client import send
+
+    support = tray_proc.support()
+    if not support.ok:
+        print(f"whisper-desk: {support.detail} — {support.fix}", file=sys.stderr)
+        if support.detail.startswith("no AppIndicator"):
+            return 1
+        # The library is there: the icon appears as soon as the desktop hosts one.
+    held = tray_proc.lock()
+    if held is None:
+        return 0  # already in the tray
+    controller = tray_proc.TrayController(config_module.load(), BIN, send)
+    try:
+        reason = tray_proc.run(controller)
+    except window_proc.WindowUnavailable as error:
+        return _print_error(str(error))
+    finally:
+        held.close()
+    if reason:
+        return _print_error(reason)
     return 0
 
 
@@ -293,27 +424,76 @@ def _measure_microphone(config: dict, seconds: int = 2) -> tuple[float, float]:
     return sum(levels) / len(levels), max(levels)
 
 
+class _Report:
+    """The diagnostic's lines: ✓ fine, ✗ to fix, ⚠ optional — and how to fix it.
+
+    A failure alone says what is wrong; the line under it says what to type.
+    """
+
+    def __init__(self, stream=None):
+        self.stream = stream or sys.stdout
+        colour = self.stream.isatty() and not os.environ.get("NO_COLOR")
+        self._green, self._red, self._yellow, self._dim, self._reset = (
+            ("\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[0m") if colour else ("",) * 5
+        )
+        self.problems = 0
+        self.warnings = 0
+
+    def section(self, title: str) -> None:
+        print(f"\n{title}", file=self.stream)
+
+    def check(self, label: str, ok: bool, detail: str = "", fix: str = "",
+              optional: bool = False) -> None:
+        if ok:
+            mark = f"{self._green}✓{self._reset}"
+        elif optional:
+            mark = f"{self._yellow}⚠{self._reset}"
+            self.warnings += 1
+        else:
+            mark = f"{self._red}✗{self._reset}"
+            self.problems += 1
+        print(f"  {mark} {label}{f' — {detail}' if detail else ''}", file=self.stream)
+        if not ok and fix:
+            print(f"      {self._dim}→{self._reset} {fix}", file=self.stream)
+
+    def note(self, text: str) -> None:
+        print(f"    {self._dim}{text}{self._reset}", file=self.stream)
+
+    def summary(self) -> None:
+        if self.problems:
+            plural = "s" if self.problems > 1 else ""
+            print(f"\n{self._red}{self.problems} problem{plural} to fix{self._reset}"
+                  " — the → lines above say how.", file=self.stream)
+        else:
+            print(f"\n{self._green}Everything is ready.{self._reset}", file=self.stream)
+        if self.warnings:
+            plural = "s" if self.warnings > 1 else ""
+            print(f"{self.warnings} optional item{plural} missing (⚠): whisper-desk works without.",
+                  file=self.stream)
+
+
 def cmd_doctor(_args: argparse.Namespace) -> int:
-    from . import capture, hotkey, inject, output, service, update
+    from . import capture, hotkey, inject, output, service, tray_proc, update
     from .daemon import socket_path
-    from .overlay_proc import system_python
+    from .overlay_proc import gtk_available
     from .recorder import SILENT_INPUT_PEAK
     from .transcriber import has_nvidia_gpu
 
-    def check(label: str, ok: bool, detail: str = "") -> None:
-        print(f"  {'✓' if ok else '✗'} {label}{f' — {detail}' if detail else ''}")
-
+    report = _Report()
+    check = report.check
     config = config_module.load()
     settings = config["recording"]
 
-    print("Version")
+    print("whisper-desk doctor")
+    report.section("Version")
     fingerprint = update.read_fingerprint()
     local = update.commit(fingerprint)
     check(
         f"whisper-desk {__version__}",
         bool(local),
-        update.describe(fingerprint) if local
-        else "unknown commit, installed before the fingerprint — 'whisper-desk update' records it",
+        update.describe(fingerprint) if local else "unknown commit, installed before the fingerprint",
+        fix="whisper-desk update — it records the version",
+        optional=True,
     )
     # Asking upstream is a courtesy, never a condition: offline, the
     # diagnostic goes on without a word about it.
@@ -324,87 +504,111 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     except update.UpstreamUnreachable:
         latest = None
     if latest and local and latest["commit"] != local:
-        print(
-            f"  ⚠ {update.ref(fingerprint)} @ {update.short(latest['commit'])}"
-            " is newer — run 'whisper-desk update'"
+        check(
+            "up to date", False,
+            f"{update.ref(fingerprint)} @ {update.short(latest['commit'])} is newer",
+            fix="whisper-desk update", optional=True,
         )
 
-    print(f"System — {host.label()}")
+    report.section(f"System — {host.label()}")
     usable = capture.available()
     check(
         "microphone capture",
         bool(usable),
-        ", ".join(usable) if usable
-        else f"install {capture.PACKAGES[capture.recommended()]}",
+        ", ".join(usable) if usable else "no capture tool",
+        fix=f"install the {capture.PACKAGES[capture.recommended()]} package",
     )
     level, peak = _measure_microphone(config)
     audible = peak > SILENT_INPUT_PEAK
     check(
         f"the microphone picks up sound ('{settings['device']}')",
         audible,
-        f"average level {level:.0f}, peak {peak:.0f}"
-        + ("" if audible else f" — {_microphone_hint()}"),
+        f"average level {level:.0f}, peak {peak:.0f}",
+        fix=_microphone_hint() + " — or pick another one in whisper-desk settings",
     )
     tool = output.clipboard_tool()
     check(
         "clipboard",
         bool(tool),
-        tool or f"install {' or '.join(output.CLIPBOARD_TOOLS[host.name()])}",
+        tool or "no clipboard tool",
+        fix=f"install {' or '.join(output.CLIPBOARD_TOOLS[host.name()])}",
     )
     keyboard = inject.keyboard(str(config["output"]["keyboard"]))
-    check(
-        f"paste keystroke ({keyboard.name})",
-        keyboard.available,
-        keyboard.hint if not keyboard.available else "",
+    check(f"paste keystroke ({keyboard.name})", keyboard.available, fix=keyboard.hint)
+    notifier = bool(shutil.which("notify-send")) or (
+        host.is_macos() and bool(shutil.which("osascript"))
     )
     check(
         "notifications",
-        bool(shutil.which("notify-send"))
-        or (host.is_macos() and bool(shutil.which("osascript"))),
-        "osascript" if host.is_macos() else "libnotify-bin package",
+        notifier,
+        "" if notifier else "the fallback when there is no overlay",
+        fix="osascript ships with macOS" if host.is_macos() else "install the libnotify-bin package",
+        optional=True,
     )
     if host.is_macos():
-        check("NVIDIA GPU", False, "transcription on the CPU (int8) — normal on macOS")
+        check("NVIDIA GPU", False, "transcription on the CPU (int8) — normal on macOS",
+              optional=True)
     else:
-        check("NVIDIA GPU", has_nvidia_gpu(), "otherwise transcription on the CPU")
+        gpu = has_nvidia_gpu()
+        check("NVIDIA GPU", gpu, "transcription on the GPU" if gpu else "transcription on the CPU",
+              fix="nothing to do: the CPU works, with the 'small' model", optional=True)
 
+    overlay_ok = gtk_available()
     if config["overlay"]["enabled"]:
+        x11 = bool(os.environ.get("DISPLAY"))
         check(
             "overlay without focus stealing (X11/Xwayland)",
-            bool(os.environ.get("DISPLAY")),
-            "otherwise the overlay would catch the paste",
+            x11,
+            "" if x11 else "the overlay would catch the paste",
+            fix="enable Xwayland, or set overlay.enabled = false in whisper-desk settings",
         )
-        overlay_ok = subprocess.run(
-            [system_python(), "-c",
-             "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk"],
-            capture_output=True,
-        ).returncode == 0
-        check("GTK3 overlay", overlay_ok, _overlay_hint())
+        check("GTK3 overlay", overlay_ok, fix=_overlay_hint())
+    check(
+        "history and settings windows",
+        overlay_ok,
+        "" if overlay_ok else "GTK3 for the system Python",
+        fix=_overlay_hint() + " — the command line does the same meanwhile",
+        optional=True,
+    )
+    if not host.is_macos():
+        indicator = tray_proc.support()
+        check("tray indicator", indicator.ok, indicator.detail, fix=indicator.fix, optional=True)
 
-    print("Configuration")
-    check(f"file {config_module.CONFIG_PATH}", config_module.CONFIG_PATH.exists())
-    print(
-        f"    model={config['model']['name']} language={config['model']['language']}"
+    report.section("Configuration")
+    check(
+        f"file {config_module.CONFIG_PATH}",
+        config_module.CONFIG_PATH.exists(),
+        fix="whisper-desk update puts it back, or whisper-desk settings writes it",
+    )
+    report.note(
+        f"model={config['model']['name']} language={config['model']['language']}"
         f" output={config['output']['mode']}"
         f" paste={'+'.join(inject.resolve_shortcut(str(config['output']['paste_shortcut'])))}"
         f" streaming={'yes' if settings['streaming'] else 'no'}"
     )
 
-    print("Service")
+    report.section("Service")
     state = service.status()
-    check(f"daemon ({service.manager()})", state == "active", state)
-    check(f"socket {socket_path()}", socket_path().exists())
+    check(f"daemon ({service.manager()})", state == "active", state, fix=service.hint())
+    check(
+        f"socket {socket_path()}",
+        socket_path().exists(),
+        fix="it appears once the daemon runs: " + service.hint(),
+    )
 
-    print("Shortcut")
+    report.section("Shortcut")
     try:
         current = hotkey.show()
         check(
             f"{hotkey.backend().name} shortcut",
             bool(current),
             current.get("binding", "missing") if current else "missing",
+            fix="whisper-desk hotkey install, or choose one in whisper-desk settings",
         )
     except hotkey.UnsupportedDesktop as error:
-        check("global shortcut", False, str(error))
+        check("global shortcut", False, str(error),
+              fix=f"create it by hand in your desktop settings, on the command '{BIN} toggle'")
+    report.summary()
     return 0
 
 
@@ -469,6 +673,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="daemon state").set_defaults(func=cmd_simple("status"))
     sub.add_parser("reload", help="reloads the configuration").set_defaults(func=cmd_simple("reload"))
     sub.add_parser("quit", help="stops the daemon").set_defaults(func=cmd_simple("quit"))
+    sub.add_parser("pause", help="the shortcut is ignored until resume").set_defaults(
+        func=cmd_simple("pause")
+    )
+    sub.add_parser("resume", help="the shortcut dictates again").set_defaults(
+        func=cmd_simple("resume")
+    )
     sub.add_parser("doctor", help="diagnostic of the installation").set_defaults(func=cmd_doctor)
 
     update_parser = sub.add_parser(
@@ -482,11 +692,44 @@ def build_parser() -> argparse.ArgumentParser:
     )
     update_parser.set_defaults(func=cmd_update)
 
+    history_parser = sub.add_parser(
+        "history",
+        help="past dictations: list, search, copy, delete",
+        description="Past dictations, numbered from 1 (the latest).",
+    )
+    history_parser.add_argument("query", nargs="*", help="words to look for (case and accents ignored)")
+    history_parser.add_argument(
+        "-n", "--limit", type=int, default=20, help="how many to show (0: all; default 20)"
+    )
+    history_parser.add_argument("--copy", type=int, metavar="N", help="copies dictation N")
+    history_parser.add_argument("--delete", type=int, metavar="N", help="deletes dictation N")
+    history_parser.add_argument("--clear", action="store_true", help="deletes every dictation")
+    history_parser.add_argument(
+        "--keep-days", type=int, metavar="DAYS",
+        help="deletes dictations older than DAYS from now on (0: keep them all)",
+    )
+    history_parser.add_argument(
+        "--window", action="store_true", help="opens the history window (GTK)"
+    )
+    history_parser.set_defaults(func=cmd_history)
+
     hotkey_parser = sub.add_parser("hotkey", help="manages the global shortcut")
     hotkey_parser.add_argument(
         "hotkey_action", nargs="?", default="install", choices=("install", "remove", "show")
     )
     hotkey_parser.set_defaults(func=cmd_hotkey)
+
+    sub.add_parser(
+        "settings", help="settings window: language, model, microphone, shortcut…"
+    ).set_defaults(func=cmd_settings)
+    welcome_parser = sub.add_parser(
+        "welcome", help="the first-launch window: microphone, model, a first dictation"
+    )
+    welcome_parser.add_argument(
+        "--if-first", action="store_true", help="only if it was never completed"
+    )
+    welcome_parser.set_defaults(func=cmd_welcome)
+    sub.add_parser("tray", help="the tray indicator").set_defaults(func=cmd_tray)
 
     config_parser = sub.add_parser("config", help="user configuration")
     config_parser.add_argument(

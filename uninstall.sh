@@ -27,7 +27,14 @@ if [ -x "$HOME/.local/bin/whisper-desk" ]; then
     say "Stopping the daemon and removing the keyboard shortcut"
     "$HOME/.local/bin/whisper-desk" quit >/dev/null 2>&1 || true
     "$HOME/.local/bin/whisper-desk" hotkey remove >/dev/null 2>&1 || true
+    pkill -f "whisper_desk tray" >/dev/null 2>&1 || true
 fi
+
+say "Removing the menu entries and the tray icon"
+for entry in settings history; do
+    rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/whisper-desk-$entry.desktop"
+done
+rm -f "${XDG_CONFIG_HOME:-$HOME/.config}/autostart/whisper-desk-tray.desktop"
 
 say "Removing the files"
 rm -f "$HOME/.local/bin/whisper-desk"

@@ -9,6 +9,7 @@
 #   WD_SRC    local directory to copy (install from a clone, without network)
 #   WD_NO_SERVICE=1   do not install the service (systemd or launchd)
 #   WD_NO_HOTKEY=1    do not install the keyboard shortcut
+#   WD_NO_WELCOME=1   do not open the welcome window after a first installation
 set -eu
 
 WD_REPO="${WD_REPO:-SalvadorCardona/whisper-desk}"
@@ -25,6 +26,8 @@ CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/whisper-desk"
 CONFIG="$CONFIG_DIR/config.toml"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/whisper-desk"
 UNIT_DIR="$HOME/.config/systemd/user"
+APPLICATIONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 AGENT_DIR="$HOME/Library/LaunchAgents"
 AGENT_LABEL="fr.whisperdesk.daemon"
 
@@ -104,6 +107,17 @@ else
     # The overlay runs in GTK3 with the system Python.
     if ! python3 -c "import gi; gi.require_version('Gtk','3.0'); from gi.repository import Gtk" 2>/dev/null; then
         MISSING="$MISSING python3-gi gir1.2-gtk-3.0"
+    fi
+    # The tray icon is a bonus: its absence is only mentioned.
+    if [ "$HOST" = linux ] && ! python3 -c "
+import gi
+for name in ('AyatanaAppIndicator3', 'AppIndicator3'):
+    try:
+        gi.require_version(name, '0.1'); raise SystemExit(0)
+    except ValueError:
+        pass
+raise SystemExit(1)" 2>/dev/null; then
+        warn "optional, for the tray icon: gir1.2-ayatanaappindicator3-0.1"
     fi
 
     if [ -n "$MISSING" ]; then
@@ -237,11 +251,31 @@ chmod +x "$BIN"
 ok "command installed: $BIN"
 
 # --- 5. configuration -------------------------------------------------------
+FIRST_INSTALL=0
 if [ -f "$CONFIG" ]; then
     ok "existing configuration kept: $CONFIG"
 else
     cp "$APP_DIR/config.example.toml" "$CONFIG"
     ok "configuration created: $CONFIG"
+    FIRST_INSTALL=1
+fi
+
+# --- 5b. desktop entries ----------------------------------------------------
+# Settings and History in the applications menu: the way in that works even
+# where no tray icon is shown (GNOME without its AppIndicator extension).
+if [ "$HOST" != macos ]; then
+    mkdir -p "$APPLICATIONS_DIR"
+    for entry in settings history; do
+        sed -e "s|@BIN@|$BIN|g" "$APP_DIR/desktop/whisper-desk-$entry.desktop.in" \
+            > "$APPLICATIONS_DIR/whisper-desk-$entry.desktop"
+    done
+    ok "Settings and History added to the applications menu"
+fi
+if [ "$HOST" = linux ]; then
+    mkdir -p "$AUTOSTART_DIR"
+    sed -e "s|@BIN@|$BIN|g" "$APP_DIR/desktop/whisper-desk-tray.desktop.in" \
+        > "$AUTOSTART_DIR/whisper-desk-tray.desktop"
+    ok "tray icon started at login (where the desktop shows one)"
 fi
 
 # --- 6. user service (automatic startup) ------------------------------------
@@ -310,3 +344,13 @@ case ":$PATH:" in
     *) printf '  %s!%s add %s to your PATH: echo '"'"'export PATH="$HOME/.local/bin:$PATH"'"'"' >> ~/.bashrc\n\n' "$YELLOW" "$RESET" "$BIN_DIR" ;;
 esac
 printf '  %sThe model is downloaded on the first startup (a few hundred MB).%s\n\n' "$DIM" "$RESET"
+
+# --- 9. first launch ----------------------------------------------------------
+# A first installation ends on the welcome window: microphone, language and
+# model, download, a first dictation. An update never reopens it.
+if [ "$FIRST_INSTALL" = 1 ] && [ "${WD_NO_WELCOME:-0}" != "1" ] \
+    && { [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ] || [ "$HOST" = macos ]; }; then
+    nohup "$BIN" welcome --if-first >/dev/null 2>&1 &
+    [ "$HOST" = linux ] && nohup "$BIN" tray >/dev/null 2>&1 &
+    printf '  The welcome window is opening: it walks you through a first dictation.\n\n'
+fi

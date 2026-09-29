@@ -32,9 +32,12 @@ logging.getLogger("whisper-desk.daemon").setLevel(logging.CRITICAL)
 CONFIG = {
     # "clipboard" keeps the virtual keyboard out of the way: what is under test
     # is what reaches the output, not how it is typed.
-    "output": {"mode": "clipboard", "history": False, "notify": False},
-    "recording": {"device": "default"},
+    "output": {
+        "mode": "clipboard", "history": False, "notify": False, "paste_shortcut": "ctrl+v",
+    },
+    "recording": {"device": "default", "start_timeout_seconds": 8},
     "overlay": {"enabled": False},
+    "hotkey": {"binding": "<Super>j"},
     "model": {},
 }
 
@@ -52,22 +55,46 @@ def wait_until(predicate, timeout: float = TIMEOUT) -> bool:
 class FakeOverlay:
     """The listening window, reduced to what the dictation asks of it."""
 
-    def __init__(self, *_args, **_kwargs):
+    def __init__(self, _config=None, on_event=None):
         self.bars = 0
+        self.on_event = on_event
         self.states: list[str] = []
+        # The words of the states that carry some: (state, title, detail).
+        self.messages: list[tuple[str, str, str]] = []
+        self.texts: list[str] = []
+        self.progress: list[float] = []
+        self.hint = ""
         self.stopped = False
 
-    def start(self) -> None:
-        pass
+    alive = True
 
-    def set_state(self, state: str) -> None:
+    def start(self, state: str = "listening", hint: str = "") -> None:
+        self.hint = hint
         self.states.append(state)
+
+    def set_state(self, state: str, title: str = "", detail: str = "") -> None:
+        if self.stopped:
+            return  # a closed window hears nothing more
+        self.states.append(state)
+        if title or detail:
+            self.messages.append((state, title, detail))
+
+    def set_text(self, text: str) -> None:
+        self.texts.append(text)
+
+    def set_progress(self, progress: float) -> None:
+        self.progress.append(progress)
 
     def set_level(self, level: float, bands=()) -> None:
         pass
 
     def stop(self) -> None:
         self.stopped = True
+
+    @property
+    def final(self) -> tuple[str, str, str] | None:
+        """The last message the window showed before closing."""
+        return self.messages[-1] if self.messages else None
 
 
 class FakeRecorder:
@@ -112,6 +139,9 @@ class FakeTranscriber:
     def __init__(self):
         self.model_name, self.device, self.compute_type = "fake", "cpu", "int8"
         self.is_loaded = True
+        self.is_downloaded = True
+        self.loading = False
+        self.error = None
         self.entered = threading.Event()    # a segment has reached the model
         self.release = threading.Event()    # ... and may leave it
         self.release.set()
@@ -124,11 +154,37 @@ class FakeTranscriber:
         return pcm.decode()
 
 
-class ToggleTest(unittest.TestCase):
+class ColdTranscriber(FakeTranscriber):
+    """A model still to be downloaded: it arrives when the test says so."""
+
+    def __init__(self, failure: Exception | None = None):
+        super().__init__()
+        self.is_loaded = False
+        self.is_downloaded = False
+        self.failure = failure
+        self.arrived = threading.Event()
+
+    def download_progress(self) -> float | None:
+        return 0.5
+
+    def load(self) -> None:
+        self.loading = True
+        self.arrived.wait(TIMEOUT)
+        self.loading = False
+        if self.failure is not None:
+            self.error = str(self.failure)
+            raise self.failure
+        self.is_loaded = True
+
+
+class DictationCase(unittest.TestCase):
+    """A daemon whose microphone, model and window belong to the test."""
+
     def setUp(self):
         self.recorder = FakeRecorder([b"a sentence"])
         self.transcriber = FakeTranscriber()
         self.delivered: list[str] = []
+        self.delivery_works = True
 
     @contextlib.contextmanager
     def service(self):
@@ -142,7 +198,7 @@ class ToggleTest(unittest.TestCase):
                 mock.patch.object(daemon, "Transcriber", lambda *a, **k: self.transcriber), \
                 mock.patch.object(
                     daemon.output, "deliver",
-                    lambda text, *a, **k: self.delivered.append(text),
+                    lambda text, *a, **k: self.delivered.append(text) or self.delivery_works,
                 ), \
                 mock.patch.object(daemon.output, "notify", lambda *a, **k: None):
             service = daemon.Service(CONFIG)
@@ -169,6 +225,8 @@ class ToggleTest(unittest.TestCase):
         service.toggle()
         self.assertTrue(wait_until(lambda: service.state == "working"))
 
+
+class ToggleTest(DictationCase):
     # -- the two first presses, unchanged -----------------------------------
     def test_the_first_press_starts_the_listening(self):
         with self.service() as service:
@@ -280,6 +338,13 @@ class ToggleTest(unittest.TestCase):
             self.assertIsNotNone(service.session)
             self.assertNotEqual(service.state, "idle")
 
+    def test_a_cut_dictation_says_so_on_the_window(self):
+        with self.service() as service:
+            self.transcribing(service)
+            overlay = service.session.overlay
+            service.toggle()
+            self.assertEqual(overlay.final[0], "cancelled")
+
     def test_a_cut_dictation_says_nothing_about_the_microphone(self):
         """No sentence is not the same as no sound: no mute-microphone warning."""
         with self.service() as service, \
@@ -289,6 +354,281 @@ class ToggleTest(unittest.TestCase):
             self.transcriber.release.set()
             self.assertTrue(wait_until(lambda: service.session is None))
             notify.assert_not_called()
+
+
+
+class FeedbackTest(DictationCase):
+    """The window says how every dictation ended: nobody is left guessing."""
+
+    def finished(self, service) -> FakeOverlay:
+        """Runs one dictation to its end and returns its window."""
+        self.listening(service)
+        overlay = service.session.overlay
+        service.toggle()
+        self.assertTrue(wait_until(lambda: service.session is None))
+        return overlay
+
+    def test_a_dictation_ends_on_the_text_it_inserted(self):
+        with self.service() as service:
+            overlay = self.finished(service)
+        self.assertEqual(overlay.final, ("done", "a sentence", "Copied to the clipboard"))
+
+    def test_each_sentence_is_shown_as_it_comes(self):
+        self.recorder.segments[:] = [b"first", b"second"]
+        with self.service() as service:
+            overlay = self.finished(service)
+        self.assertEqual(overlay.texts, ["first", "second"])
+
+    def test_the_window_says_how_to_stop(self):
+        with self.service() as service:
+            self.listening(service)
+            self.assertEqual(service.session.overlay.hint, "Super+J to finish")
+
+    def test_nothing_said_is_an_error_worth_showing(self):
+        self.recorder.segments[:] = []
+        self.recorder.reason = "no-speech"
+        with self.service() as service:
+            overlay = self.finished(service)
+        self.assertEqual(overlay.final, ("error", "Nothing heard", "Nothing was said within 8 s"))
+
+    def test_a_mute_microphone_is_told_apart_from_silence(self):
+        self.recorder.segments[:] = []
+        self.recorder.peak = 0.0
+        with self.service() as service:
+            overlay = self.finished(service)
+        self.assertEqual(overlay.final[:2], ("error", "The microphone is silent"))
+
+    def test_a_failed_insertion_is_an_error(self):
+        self.delivery_works = False
+        with self.service() as service:
+            overlay = self.finished(service)
+        self.assertEqual(overlay.final[:2], ("error", "The text could not be inserted"))
+
+    def test_without_a_window_the_error_becomes_a_notification(self):
+        self.recorder.segments[:] = []
+        with self.service() as service, \
+                mock.patch.object(daemon.output, "notify") as notify, \
+                mock.patch.object(FakeOverlay, "alive", False):
+            self.finished(service)
+        notify.assert_called_once()
+        self.assertIn("nothing heard", notify.call_args.args[0])
+
+    def test_the_window_can_cut_the_dictation_off(self):
+        """Esc or a click on the overlay: the same as the shortcut's second press."""
+        self.transcriber.release.clear()
+        with self.service() as service:
+            self.listening(service)
+            overlay = service.session.overlay
+            self.assertTrue(self.transcriber.entered.wait(TIMEOUT))
+            overlay.on_event("cancel")
+            self.assertTrue(wait_until(lambda: self.recorder.aborted.is_set()))
+            self.transcriber.release.set()
+            self.assertTrue(wait_until(lambda: service.session is None))
+        self.assertEqual(overlay.final[0], "cancelled")
+        self.assertEqual(self.delivered, [])
+
+
+class HistoryTest(DictationCase):
+    """One entry per dictation, whatever the number of sentences it took."""
+
+    def setUp(self):
+        super().setUp()
+        self.recorded: list[tuple[str, dict]] = []
+        patcher = mock.patch.object(
+            daemon.history, "append",
+            lambda text, **kwargs: self.recorded.append((text, kwargs)),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.dict(
+            CONFIG, {"output": {**CONFIG["output"], "history": True, "history_days": 30}}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def dictate(self) -> None:
+        with self.service() as service:
+            self.listening(service)
+            service.toggle()
+            self.assertTrue(wait_until(lambda: service.session is None))
+
+    def test_the_sentences_make_one_entry(self):
+        self.recorder.segments[:] = [b"first", b"second"]
+        self.dictate()
+        self.assertEqual(len(self.recorded), 1)
+        text, details = self.recorded[0]
+        self.assertEqual(text, "first second")
+        self.assertEqual(details["model"], "fake")
+        self.assertEqual(details["keep_days"], 30)
+        self.assertGreaterEqual(details["duration"], 0.0)
+
+    def test_nothing_said_leaves_no_entry(self):
+        self.recorder.segments[:] = []
+        self.dictate()
+        self.assertEqual(self.recorded, [])
+
+
+class InsertTest(DictationCase):
+    """A dictation brought back from the history is typed by the daemon."""
+
+    def test_the_daemon_types_the_text_again(self):
+        written: list[str] = []
+
+        class Writer:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def prepare(self):
+                pass
+
+            def write(self, text):
+                written.append(text)
+                return True
+
+            def close(self):
+                pass
+
+        with self.service() as service, \
+                mock.patch.object(daemon.output, "CursorWriter", Writer), \
+                mock.patch.object(daemon, "INSERT_DELAY_SECONDS", 0):
+            self.assertEqual(service.insert("hello again"), {"inserting": True})
+            self.assertTrue(wait_until(lambda: written == ["hello again"]))
+
+    def test_not_over_a_dictation(self):
+        with self.service() as service:
+            self.listening(service)
+            self.assertIn("error", service.insert("hello again"))
+
+    def test_nothing_to_insert(self):
+        with self.service() as service:
+            self.assertIn("error", service.insert("  "))
+
+
+class PauseTest(DictationCase):
+    """Paused from the tray: the shortcut answers, and does not listen."""
+
+    def test_a_paused_shortcut_opens_no_microphone(self):
+        with self.service() as service, \
+                mock.patch.object(daemon.Service, "_show_paused") as shown:
+            service.pause()
+            self.assertEqual(service.toggle(), {"state": "paused"})
+            self.assertTrue(wait_until(lambda: shown.called))
+            self.assertIsNone(service.session)
+            self.assertFalse(self.recorder.listening.is_set())
+
+    def test_resume(self):
+        with self.service() as service:
+            service.pause()
+            service.resume()
+            self.assertEqual(service.toggle(), {"state": "recording"})
+
+    def test_the_pause_is_told_on_the_window(self):
+        windows: list[FakeOverlay] = []
+
+        def build(*args, **kwargs):
+            windows.append(FakeOverlay(*args, **kwargs))
+            return windows[-1]
+
+        with self.service() as service, mock.patch.object(daemon, "OverlayProcess", build):
+            service._show_paused()
+        self.assertEqual(windows[0].final[:2], ("paused", "whisper-desk is paused"))
+        self.assertTrue(windows[0].stopped)
+
+    def test_the_status_says_what_the_tray_shows(self):
+        with self.service() as service:
+            service.pause()
+            status = service.status()
+        self.assertEqual(status["microphone"], "default")
+        self.assertTrue(status["paused"])
+        self.assertIsNone(status["download"])
+
+
+class ReloadTest(DictationCase):
+    """A saved setting reloads the daemon: the model only goes if it changed."""
+
+    def reload_with(self, **model) -> tuple[object, object]:
+        with self.service() as service:
+            before = service.transcriber
+            changed = {**service.config, "model": {**service.config["model"], **model}}
+            with mock.patch.object(daemon.config_module, "load", lambda: changed), \
+                    mock.patch.object(daemon, "Transcriber", lambda config: FakeTranscriber()):
+                self.assertEqual(service.reload(), {"reloaded": True})
+            return before, service.transcriber
+
+    def test_a_colour_keeps_the_model_in_memory(self):
+        before, after = self.reload_with()
+        self.assertIs(before, after)
+
+    def test_a_new_model_is_loaded(self):
+        before, after = self.reload_with(name="small", preload=False)
+        self.assertIsNot(before, after)
+
+
+class LoadTest(DictationCase):
+    def test_a_failed_load_is_in_the_status(self):
+        self.transcriber = ColdTranscriber(failure=RuntimeError("disk full"))
+        self.transcriber.arrived.set()
+        logging.getLogger("whisper-desk.daemon").disabled = True
+        try:
+            with self.service() as service:
+                service.load()
+                self.assertTrue(wait_until(lambda: service.status()["load_error"] == "disk full"))
+                self.assertFalse(service.status()["loading"])
+        finally:
+            logging.getLogger("whisper-desk.daemon").disabled = False
+
+    def test_load_starts_the_model_in_the_background(self):
+        self.transcriber = ColdTranscriber()
+        with self.service() as service:
+            self.assertEqual(service.load(), {"loaded": False})
+            self.transcriber.arrived.set()
+            self.assertTrue(wait_until(lambda: self.transcriber.is_loaded))
+            self.assertEqual(service.load(), {"loaded": True})
+
+
+class LoadingTest(DictationCase):
+    """A model still on its way is shown, and the microphone waits for it."""
+
+    def test_the_microphone_opens_once_the_model_is_there(self):
+        self.transcriber = ColdTranscriber()
+        with self.service() as service:
+            service.toggle()
+            overlay = service.session.overlay
+            self.assertTrue(wait_until(lambda: overlay.progress))
+            self.assertEqual(service.state, "loading")
+            self.assertFalse(self.recorder.listening.is_set())
+            self.transcriber.arrived.set()
+            self.assertTrue(self.recorder.listening.wait(TIMEOUT))
+            self.assertEqual(overlay.states[:2], ["loading", "loading"])
+            self.assertIn("listening", overlay.states)
+            self.assertEqual(overlay.messages[0], ("loading", "Downloading the fake model", ""))
+
+    def test_the_shortcut_cancels_the_wait(self):
+        self.transcriber = ColdTranscriber()
+        with self.service() as service:
+            service.toggle()
+            overlay = service.session.overlay
+            self.assertTrue(wait_until(lambda: service.state == "loading"))
+            self.assertEqual(service.toggle(), {"state": "cancelled"})
+            self.assertTrue(wait_until(lambda: service.session is None))
+            self.transcriber.arrived.set()
+        self.assertFalse(self.recorder.listening.is_set())
+        self.assertEqual(overlay.final[0], "cancelled")
+
+    def test_a_model_that_cannot_load_is_an_error(self):
+        self.transcriber = ColdTranscriber(failure=RuntimeError("no space left on device"))
+        self.transcriber.arrived.set()
+        logging.getLogger("whisper-desk.daemon").disabled = True
+        try:
+            with self.service() as service:
+                service.toggle()
+                overlay = service.session.overlay
+                self.assertTrue(wait_until(lambda: service.session is None))
+        finally:
+            logging.getLogger("whisper-desk.daemon").disabled = False
+        self.assertEqual(
+            overlay.final, ("error", "The model could not be loaded", "no space left on device")
+        )
 
 
 if __name__ == "__main__":

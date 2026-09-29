@@ -330,6 +330,7 @@
   .shot{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;text-align:center}
   .shot img{width:100%;max-width:336px;height:auto;border-radius:8px}
   .shot span{display:block;margin-top:12px;font-size:13px;color:var(--dim)}
+  .shot.wide img{max-width:680px}
 
   /* author card */
   .author{
@@ -487,17 +488,52 @@
     <div class="shots">
       <div class="shot">
         <picture>
-          <source srcset="overlay-listening.webp" type="image/webp">
-          <img src="overlay-listening.png" alt="The whisper-desk overlay while listening" width="336" height="120" loading="lazy">
+          <source srcset="overlay-loading.webp" type="image/webp">
+          <img src="overlay-loading.png" alt="The whisper-desk overlay while the model downloads" width="267" height="110" loading="lazy">
         </picture>
-        <span>While listening</span>
+        <span>Loading — the model arrives, with its gauge</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-listening.webp" type="image/webp">
+          <img src="overlay-listening.png" alt="The whisper-desk overlay while listening" width="262" height="110" loading="lazy">
+        </picture>
+        <span>Listening — how to finish or cancel, below</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-live.webp" type="image/webp">
+          <img src="overlay-live.png" alt="The whisper-desk overlay showing the sentence just transcribed" width="408" height="110" loading="lazy">
+        </picture>
+        <span>As you go — the last sentence, live</span>
       </div>
       <div class="shot">
         <picture>
           <source srcset="overlay-working.webp" type="image/webp">
-          <img src="overlay-working.png" alt="The whisper-desk overlay while transcribing" width="336" height="120" loading="lazy">
+          <img src="overlay-working.png" alt="The whisper-desk overlay while transcribing" width="262" height="110" loading="lazy">
         </picture>
-        <span>While transcribing</span>
+        <span>Transcribing</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-done.webp" type="image/webp">
+          <img src="overlay-done.png" alt="The whisper-desk overlay after a successful dictation" width="408" height="110" loading="lazy">
+        </picture>
+        <span>Done — the beginning of the text inserted</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-error.webp" type="image/webp">
+          <img src="overlay-error.png" alt="The whisper-desk overlay after a dictation that heard nothing" width="408" height="110" loading="lazy">
+        </picture>
+        <span>Error — a short reason, and what to do</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-cancelled.webp" type="image/webp">
+          <img src="overlay-cancelled.png" alt="The whisper-desk overlay after a cancelled dictation" width="408" height="110" loading="lazy">
+        </picture>
+        <span>Cancelled — Esc, a click or the shortcut</span>
       </div>
     </div>
   </div>
@@ -527,8 +563,49 @@
       <p>Once installed, updates go through the command itself: <code>whisper-desk update</code>.</p>
     </div>
 
+    <h3>First launch</h3>
+    <p>
+      A first installation ends on the welcome window: the microphone with a gauge that must move,
+      the language and the model, the download with its progress, then your shortcut and a first
+      dictation. <code>whisper-desk welcome</code> opens it again; <code>WD_NO_WELCOME=1</code> skips it.
+    </p>
+    <div class="shots">
+      <div class="shot">
+        <picture>
+          <source srcset="welcome-microphone.webp" type="image/webp">
+          <img src="welcome-microphone.png" alt="Welcome window: the microphone gauge" width="672" height="553" loading="lazy">
+        </picture>
+        <span>1 — the microphone</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="welcome-model.webp" type="image/webp">
+          <img src="welcome-model.png" alt="Welcome window: language and model" width="672" height="553" loading="lazy">
+        </picture>
+        <span>2 — language and model</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="welcome-download.webp" type="image/webp">
+          <img src="welcome-download.png" alt="Welcome window: the model download" width="672" height="553" loading="lazy">
+        </picture>
+        <span>3 — the download, with its progress</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="welcome-try.webp" type="image/webp">
+          <img src="welcome-try.png" alt="Welcome window: the shortcut and a first dictation" width="672" height="553" loading="lazy">
+        </picture>
+        <span>4 — your shortcut, a first dictation</span>
+      </div>
+    </div>
+
     <h3>Check that everything is in place</h3>
     <pre data-copy><span class="p">$ </span>whisper-desk doctor</pre>
+    <p>
+      Every line is <b>✓</b> (fine), <b>✗</b> (to fix) or <b>⚠</b> (optional), and every failure comes
+      with the command or the setting that fixes it.
+    </p>
 
     <h3>Updating</h3>
     <pre data-copy><span class="p">$ </span>whisper-desk update</pre>
@@ -564,7 +641,7 @@
 
     <h3>Uninstalling</h3>
     <pre data-copy><span class="p">$ </span>curl -LsSf https://raw.githubusercontent.com/SalvadorCardona/whisper-desk/main/uninstall.sh | sh</pre>
-    <p>Add <code>WD_PURGE=1</code> to remove the configuration and the history as well. Downloaded models stay in <code>~/.cache/huggingface</code>.</p>
+    <p>The menu entries and the tray icon go with it. Add <code>WD_PURGE=1</code> to remove the configuration and the history as well. Downloaded models stay in <code>~/.cache/huggingface</code>.</p>
   </div>
 </section>
 
@@ -585,6 +662,7 @@
           <tr><td><kbd>Super</kbd> + <kbd>J</kbd> (again)</td><td>stops listening immediately</td></tr>
           <tr><td><kbd>Super</kbd> + <kbd>J</kbd> (once more)</td><td>cuts the dictation off: what is left is neither transcribed nor inserted</td></tr>
           <tr><td><kbd>Super</kbd> + <kbd>J</kbd> (again and again)</td><td>gives up: the window closes, the microphone is released, the daemon is free</td></tr>
+          <tr><td><kbd>Esc</kbd>, or a click on the overlay</td><td>cancels the dictation — a click on a finished state dismisses it</td></tr>
         </tbody>
       </table>
     </div>
@@ -601,9 +679,46 @@
 <span class="p">$ </span>whisper-desk status     <span class="c"># daemon state, loaded model, GPU or CPU</span>
 <span class="p">$ </span>whisper-desk doctor     <span class="c"># full diagnostic</span>
 <span class="p">$ </span>whisper-desk update     <span class="c"># update the installation (--check to compare only)</span>
+<span class="p">$ </span>whisper-desk history    <span class="c"># past dictations — see below</span>
+<span class="p">$ </span>whisper-desk settings   <span class="c"># the settings window</span>
+<span class="p">$ </span>whisper-desk welcome    <span class="c"># the first-launch window, again</span>
+<span class="p">$ </span>whisper-desk tray       <span class="c"># the tray icon</span>
+<span class="p">$ </span>whisper-desk pause      <span class="c"># the shortcut is ignored until whisper-desk resume</span>
 <span class="p">$ </span>whisper-desk config     <span class="c"># open the configuration in $EDITOR</span>
 <span class="p">$ </span>whisper-desk reload     <span class="c"># reload the configuration without restarting</span>
 <span class="p">$ </span>whisper-desk quit       <span class="c"># stop the daemon</span></pre>
+
+    <h3>Tray icon</h3>
+    <p>
+      The icon says whether the service runs, with which model and which microphone, and holds a menu:
+      start or finish a dictation, <b>History…</b>, <b>Settings…</b>, <b>Pause dictation</b>, <b>Quit</b>.
+      It needs <code>gir1.2-ayatanaappindicator3-0.1</code> for the system Python.
+      <b>GNOME shows no tray icon by itself</b>: without the AppIndicator extension
+      (<code>gnome-shell-extension-appindicator</code>, on by default on Ubuntu) the icon has nowhere to go,
+      and <code>whisper-desk doctor</code> says so. Settings and History are then in the applications menu.
+    </p>
+
+    <h3>History</h3>
+    <p>
+      Every dictation is kept — date, listening time, model and text — in
+      <code>~/.local/state/whisper-desk/history.jsonl</code>. A text lost on the way can be found
+      again, copied or typed again at the cursor. The <code>history.log</code> of earlier versions is still read.
+    </p>
+    <pre data-copy><span class="p">$ </span>whisper-desk history                  <span class="c"># the 20 latest, numbered from 1 (the latest)</span>
+<span class="p">$ </span>whisper-desk history invoice friday   <span class="c"># search: every word, case and accents ignored</span>
+<span class="p">$ </span>whisper-desk history --copy 3         <span class="c"># copies dictation 3 to the clipboard</span>
+<span class="p">$ </span>whisper-desk history --delete 3       <span class="c"># deletes it</span>
+<span class="p">$ </span>whisper-desk history --keep-days 30   <span class="c"># deletes dictations older than 30 days, from now on</span>
+<span class="p">$ </span>whisper-desk history --window         <span class="c"># the history window</span></pre>
+    <div class="shots">
+      <div class="shot wide">
+        <picture>
+          <source srcset="history-window.webp" type="image/webp">
+          <img src="history-window.png" alt="The whisper-desk history window: search, copy, insert again, delete" width="680" height="649" loading="lazy">
+        </picture>
+        <span>Search, <b>Copy</b>, <b>Insert</b> again where the cursor was, delete — and the automatic purge</span>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -612,8 +727,27 @@
     <div class="sec-head">
       <span class="sec-num">04 — Configuration</span>
       <h2>Everything fits in one file.</h2>
-      <p><code>~/.config/whisper-desk/config.toml</code></p>
+      <p><code>~/.config/whisper-desk/config.toml</code> — or, for the essentials, a window.</p>
     </div>
+
+    <pre data-copy><span class="p">$ </span>whisper-desk settings</pre>
+    <p>
+      Language, model (with its size, its speed and whether it is already downloaded), microphone
+      with a test gauge, shortcut captured from the keyboard, output mode, vocabulary, overlay
+      position and colour. <b>Save</b> writes only what changed — your comments are kept — and
+      reloads the daemon.
+    </p>
+    <div class="shots">
+      <div class="shot wide">
+        <picture>
+          <source srcset="settings-window.webp" type="image/webp">
+          <img src="settings-window.png" alt="The whisper-desk settings window" width="672" height="819" loading="lazy">
+        </picture>
+        <span>The settings window — no TOML to edit</span>
+      </div>
+    </div>
+
+    <p>The file holds everything else:</p>
 
     <pre data-copy><span class="k">[hotkey]</span>
 binding = <span class="s">"auto"</span>              <span class="c"># "auto", or &lt;Ctrl&gt;/&lt;Alt&gt;/&lt;Shift&gt;/&lt;Super&gt; + a key</span>
@@ -637,7 +771,8 @@ paste_shortcut = <span class="s">"auto"</span>       <span class="c"># "shift+in
 keyboard = <span class="s">"auto"</span>             <span class="c"># auto | uinput | windows | applescript | none</span>
 restore_clipboard = <span class="n">true</span>      <span class="c"># hands your original clipboard back at the end</span>
 notify = <span class="n">false</span>
-history = <span class="n">true</span>               <span class="c"># log in ~/.local/state/whisper-desk/history.log</span>
+history = <span class="n">true</span>               <span class="c"># keeps every dictation: whisper-desk history</span>
+history_days = <span class="n">0</span>             <span class="c"># dictations older than this are deleted; 0 = kept forever</span>
 
 <span class="k">[overlay]</span>
 enabled = <span class="n">true</span>
@@ -740,6 +875,13 @@ margin = <span class="n">96</span></pre>
           <tr><td><code>inject.py</code></td><td>simulated keystroke: <code>uinput</code>, SendKeys, System Events</td></tr>
           <tr><td><code>output.py</code></td><td>insertion at the cursor, clipboard, notifications</td></tr>
           <tr><td><code>overlay.py</code></td><td>X11 overlay (separate process)</td></tr>
+          <tr><td><code>overlay_protocol.py</code></td><td>the line protocol between the daemon and the overlay</td></tr>
+          <tr><td><code>history.py</code></td><td>dictation history (JSON Lines), search, purge</td></tr>
+          <tr><td><code>history_window.py</code></td><td>history window (GTK3, separate process)</td></tr>
+          <tr><td><code>tomlwrite.py</code></td><td>writing <code>config.toml</code> while keeping its comments</td></tr>
+          <tr><td><code>settings_window.py</code></td><td>settings window (GTK3, separate process)</td></tr>
+          <tr><td><code>welcome_window.py</code></td><td>first-launch window (GTK3, separate process)</td></tr>
+          <tr><td><code>tray_window.py</code></td><td>tray icon (AppIndicator, separate process)</td></tr>
           <tr><td><code>hotkey.py</code></td><td>global shortcut: GNOME, Start menu, <code>skhd</code></td></tr>
           <tr><td><code>service.py</code></td><td>daemon startup: systemd, launchd or direct</td></tr>
         </tbody>

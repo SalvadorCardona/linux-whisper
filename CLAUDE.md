@@ -49,6 +49,7 @@ La CI (`.github/workflows/tests.yml`) se limite aux tests ci-dessus, à
 | `bin/whisper-desk.in` | gabarit du binaire installé, `exec` le Python du venv |
 | `systemd/whisper-desk.service.in` | gabarit d'unité systemd (Linux/WSL) |
 | `launchd/fr.whisperdesk.daemon.plist.in` | gabarit d'agent launchd (macOS) |
+| `desktop/` | gabarits des entrées du menu des applications et de l'autostart de l'indicateur |
 | `docs/` | site de présentation (GitHub Pages), pas la documentation technique |
 | `install.sh` / `uninstall.sh` | installation, mise à jour, désinstallation |
 | `config.example.toml` | configuration commentée, miroir des valeurs par défaut de `config.py` |
@@ -79,7 +80,11 @@ le dupliquer ici.
   qui l'utilise, dans `transcriber.py`.
 - **L'overlay tourne hors du venv.** `overlay.py` et `overlay_proc.py` s'exécutent
   avec le Python système (celui qui a PyGObject), jamais avec celui du venv : ne pas
-  leur ajouter de dépendance qui ne serait installée que côté venv.
+  leur ajouter de dépendance qui ne serait installée que côté venv. Même règle pour
+  toutes les fenêtres `*_window.py` (historique, réglages, accueil, indicateur), vues
+  pures pilotées en JSON par leur `*_proc.py` côté venv, via `window_proc.py`.
+- **`overlay_protocol.py` est importé par `overlay.py` comme un script voisin**, pas
+  comme un module du package : stdlib seule, et aucun import relatif.
 - **Le raccourci clavier installé une première fois n'est jamais réécrit** par
   `whisper-desk update` : ne pas modifier ce comportement en passant par une autre
   tâche.
@@ -87,6 +92,6 @@ le dupliquer ici.
   s'exécuter tant qu'une transcription est en cours plutôt que de la couper.
 - **`config.example.toml` et les valeurs par défaut de `config.py` doivent rester en
   miroir** : un changement dans `DEFAULTS` sans le répercuter dans l'exemple part en
-  silence.
+  silence — `tests/test_config.py` le vérifie désormais.
 - Les tests skippés (`numpy` absent, notamment) sont normaux dans cet environnement ;
   ce n'est pas un échec à corriger.

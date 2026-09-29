@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import os
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from . import context  # noqa: F401  (adds src/ to the import path)
 
+from whisper_desk import transcriber
 from whisper_desk.transcriber import CONTEXT_CHARS, Transcriber, is_filler
 
 try:
@@ -133,6 +138,71 @@ class TranscribeTest(unittest.TestCase):
         transcriber._model = mock.Mock()
         self.assertEqual(transcriber.transcribe(b""), "")
         transcriber._model.transcribe.assert_not_called()
+
+
+class DownloadTest(unittest.TestCase):
+    """The first dictation waits for the model: the gauge says how long."""
+
+    def setUp(self):
+        self.cache = tempfile.TemporaryDirectory()
+        self.addCleanup(self.cache.cleanup)
+        patcher = mock.patch.dict(os.environ, {"HF_HUB_CACHE": self.cache.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.model = Path(self.cache.name) / "models--Systran--faster-whisper-small"
+
+    def blob(self, name: str, size: int) -> None:
+        (self.model / "blobs").mkdir(parents=True, exist_ok=True)
+        (self.model / "blobs" / name).write_bytes(b"\0" * size)
+
+    def test_nothing_on_disk_means_to_be_downloaded(self):
+        self.assertFalse(transcriber.is_downloaded("small"))
+        self.assertEqual(transcriber.download_progress("small"), 0.0)
+
+    def test_the_gauge_follows_the_bytes_received(self):
+        self.blob("model.bin.incomplete", 1_000_000)
+        with mock.patch.dict(transcriber.MODEL_BYTES, {"small": 4_000_000}):
+            self.assertAlmostEqual(transcriber.download_progress("small"), 0.25)
+
+    def test_the_gauge_never_claims_to_be_done_early(self):
+        self.blob("model.bin", 9_000_000)
+        with mock.patch.dict(transcriber.MODEL_BYTES, {"small": 4_000_000}):
+            self.assertLess(transcriber.download_progress("small"), 1.0)
+
+    def test_a_snapshot_with_its_weights_is_downloaded(self):
+        snapshot = self.model / "snapshots" / "abc123"
+        snapshot.mkdir(parents=True)
+        (snapshot / "model.bin").write_bytes(b"")
+        self.assertTrue(transcriber.is_downloaded("small"))
+
+    def test_the_english_variants_have_their_own_repository(self):
+        self.assertTrue(
+            str(transcriber._model_dir("small.en")).endswith("models--Systran--faster-whisper-small.en")
+        )
+
+    def test_a_local_model_needs_no_download(self):
+        self.assertTrue(transcriber.is_downloaded(self.cache.name))
+
+    def test_an_unknown_model_has_no_gauge(self):
+        self.assertIsNone(transcriber.download_progress("my-own-model"))
+
+    def test_the_download_goes_where_the_gauge_can_see_it(self):
+        """Xet writes the file at the very end: plain HTTP lets it grow on disk."""
+        fake = type(sys)("faster_whisper")
+        fake.WhisperModel = lambda *args, **kwargs: object()
+        with mock.patch.dict(sys.modules, {"faster_whisper": fake}), \
+                mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HF_HUB_DISABLE_XET", None)
+            Transcriber(settings()).load()
+            self.assertEqual(os.environ["HF_HUB_DISABLE_XET"], "1")
+
+    def test_a_choice_of_the_user_about_xet_is_kept(self):
+        fake = type(sys)("faster_whisper")
+        fake.WhisperModel = lambda *args, **kwargs: object()
+        with mock.patch.dict(sys.modules, {"faster_whisper": fake}), \
+                mock.patch.dict(os.environ, {"HF_HUB_DISABLE_XET": "0"}):
+            Transcriber(settings()).load()
+            self.assertEqual(os.environ["HF_HUB_DISABLE_XET"], "0")
 
 
 if __name__ == "__main__":

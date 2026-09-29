@@ -8,11 +8,9 @@ import logging
 import shutil
 import subprocess
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from . import config as config_module
 from . import host
 from .inject import keyboard, resolve_shortcut
 from .overlay_proc import system_python
@@ -207,6 +205,8 @@ class CursorWriter:
         self.clipboard = Clipboard(overlay)
         self.keyboard = keyboard(str(self.settings["keyboard"]))
         self.shortcut = resolve_shortcut(str(self.settings["paste_shortcut"]))
+        # Why the last insertion failed: "clipboard", "keyboard", or "" if it did not.
+        self.failure = ""
 
     def prepare(self) -> None:
         """Creates the virtual keyboard ahead of time: the compositor takes ~0.6 s to see it."""
@@ -219,6 +219,7 @@ class CursorWriter:
             self.clipboard.save()
         if not self.clipboard.set(text):
             logger.warning("Text not copied: insertion impossible.")
+            self.failure = "clipboard"
             return False
         # wl-copy takes ownership of the selection in a detached process:
         # pasting too early would paste the previous content.
@@ -227,8 +228,10 @@ class CursorWriter:
             logger.warning(
                 "Virtual keyboard unavailable: the text stays in the clipboard."
             )
+            self.failure = "keyboard"
             return False
         time.sleep(PASTE_SETTLE_SECONDS)
+        self.failure = ""
         return True
 
     def close(self) -> None:
@@ -268,21 +271,6 @@ def notify(summary: str, body: str = "") -> None:
     logger.debug("Notification skipped: no display method available.")
 
 
-def log_history(text: str) -> None:
-    # Later sentences arrive preceded by a joining space, which makes no sense
-    # once the line stands alone in the log.
-    entry = text.strip()
-    if not entry:
-        return
-    try:
-        config_module.STATE_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().isoformat(timespec="seconds")
-        with (config_module.STATE_DIR / "history.log").open("a", encoding="utf-8") as handle:
-            handle.write(f"{stamp}\t{entry}\n")
-    except OSError as error:
-        logger.warning("History not written: %s", error)
-
-
 def modes(config: dict[str, Any]) -> set[str]:
     raw = str(config["output"]["mode"])
     found = {mode.strip() for mode in raw.split("+") if mode.strip()}
@@ -291,19 +279,23 @@ def modes(config: dict[str, Any]) -> set[str]:
 
 
 def deliver(text: str, config: dict[str, Any], writer: CursorWriter | None = None,
-            overlay: Any = None) -> None:
-    """Applies the configured output modes to the transcribed text."""
+            overlay: Any = None) -> bool:
+    """Applies the configured output modes to the transcribed text.
+
+    False if the text could not be put where it was asked for: the dictation
+    then ends on an error the user can see, rather than on nothing at all.
+    """
     settings = config["output"]
     selected = modes(config)
+    delivered = True
 
     if "cursor" in selected and writer is not None:
-        writer.write(text)
+        delivered = writer.write(text) and delivered
     if "clipboard" in selected:
-        copy(text, overlay=overlay)
+        delivered = copy(text, overlay=overlay) and delivered
     if "stdout" in selected:
         print(text, flush=True)
-    if settings["history"]:
-        log_history(text)
     if settings["notify"]:
         preview = text if len(text) <= 140 else text[:139] + "…"
         notify("Transcription", preview)
+    return delivered
