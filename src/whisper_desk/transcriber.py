@@ -188,6 +188,10 @@ class Transcriber:
     def _load(self) -> None:
         if self._model is not None:
             return
+        # Xet writes the model file in one go, at the very end: over plain
+        # HTTP it grows on disk as it arrives, and the overlay can follow it.
+        # Read by huggingface_hub when first imported, hence set before.
+        os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
         from faster_whisper import WhisperModel
 
         name, device, compute_type = self._resolve()

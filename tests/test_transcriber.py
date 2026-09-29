@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -184,6 +185,24 @@ class DownloadTest(unittest.TestCase):
 
     def test_an_unknown_model_has_no_gauge(self):
         self.assertIsNone(transcriber.download_progress("my-own-model"))
+
+    def test_the_download_goes_where_the_gauge_can_see_it(self):
+        """Xet writes the file at the very end: plain HTTP lets it grow on disk."""
+        fake = type(sys)("faster_whisper")
+        fake.WhisperModel = lambda *args, **kwargs: object()
+        with mock.patch.dict(sys.modules, {"faster_whisper": fake}), \
+                mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("HF_HUB_DISABLE_XET", None)
+            Transcriber(settings()).load()
+            self.assertEqual(os.environ["HF_HUB_DISABLE_XET"], "1")
+
+    def test_a_choice_of_the_user_about_xet_is_kept(self):
+        fake = type(sys)("faster_whisper")
+        fake.WhisperModel = lambda *args, **kwargs: object()
+        with mock.patch.dict(sys.modules, {"faster_whisper": fake}), \
+                mock.patch.dict(os.environ, {"HF_HUB_DISABLE_XET": "0"}):
+            Transcriber(settings()).load()
+            self.assertEqual(os.environ["HF_HUB_DISABLE_XET"], "0")
 
 
 if __name__ == "__main__":
