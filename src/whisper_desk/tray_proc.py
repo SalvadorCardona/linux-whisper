@@ -146,11 +146,15 @@ class TrayController:
             line, icon = "● Listening…", "media-record-symbolic"
         elif state == "working":
             line, icon = "Transcribing…", "audio-input-microphone-symbolic"
-        elif state == "loading" or not status.get("loaded"):
+        elif state == "loading" or status.get("loading"):
             download = status.get("download")
             line = (f"Downloading {model} — {round(download * 100)} %" if download is not None
                     else f"Loading {model}…")
             icon = "folder-download-symbolic" if download is not None else "audio-input-microphone-symbolic"
+        elif not status.get("loaded") and status.get("load_error"):
+            line, icon = f"{model} could not be loaded — see whisper-desk doctor", "dialog-warning-symbolic"
+        elif not status.get("loaded"):
+            line, icon = f"Ready — {model} loads at the first dictation", "audio-input-microphone-symbolic"
         else:
             line, icon = f"Ready — {model} on the {_speed(status)}", "audio-input-microphone-symbolic"
 

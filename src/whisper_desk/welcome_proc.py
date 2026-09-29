@@ -82,11 +82,15 @@ class WelcomeController:
             status = self.send("status", timeout=5, autostart=False)
         except Exception:
             return None
-        return {
+        state = {
             "name": status.get("model", ""),
             "loaded": bool(status.get("loaded")),
             "download": status.get("download"),
         }
+        # Waiting for a load that failed, or that nobody started, is waiting forever.
+        if not state["loaded"] and not status.get("loading") and status.get("load_error"):
+            state["error"] = f"{state['name']} could not be loaded: {status['load_error']}"
+        return state
 
     def _watch(self) -> None:
         """Starts the daemon if need be, asks for the model, and follows it in."""
@@ -103,7 +107,7 @@ class WelcomeController:
                     state = self.model_state()
                     if state is not None:
                         self.emit({"model": state})
-                        if state["loaded"]:
+                        if state["loaded"] or state.get("error"):
                             break
                     self._stop.wait(WATCH_SECONDS)
             except Exception as error:

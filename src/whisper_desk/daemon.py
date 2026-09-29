@@ -410,8 +410,11 @@ class Service:
             writer.prepare()
             time.sleep(INSERT_DELAY_SECONDS)
             if not writer.write(text):
-                output.notify("whisper-desk: the text could not be inserted",
-                              "It is in the clipboard.")
+                output.notify(
+                    "whisper-desk: the text could not be inserted",
+                    "It is in the clipboard." if writer.failure == "keyboard"
+                    else "No clipboard answered — see whisper-desk doctor.",
+                )
         except Exception:
             logger.exception("Reinsertion failed")
         finally:
@@ -435,7 +438,9 @@ class Service:
             return {"state": self.state}
 
     def status(self) -> dict[str, Any]:
-        loaded = self.transcriber.is_loaded
+        transcriber = self.transcriber
+        loaded = transcriber.is_loaded
+        downloading = transcriber.loading and not transcriber.is_downloaded
         return {
             "state": self.state,
             "host": host.name(),
@@ -446,8 +451,9 @@ class Service:
             # What the tray and the welcome window show without asking twice.
             "microphone": str(self.config["recording"]["device"]),
             "paused": self.paused,
-            "download": None if loaded or self.transcriber.is_downloaded
-            else self.transcriber.download_progress(),
+            "loading": transcriber.loading,
+            "download": transcriber.download_progress() if downloading else None,
+            "load_error": transcriber.error,
         }
 
     def load(self) -> dict[str, Any]:
@@ -479,7 +485,11 @@ class Service:
         with self.lock:
             if self.state != "idle":
                 return {"error": f"busy ({self.state})"}
-            self.config = config_module.load()
+            previous, self.config = self.config, config_module.load()
+            # A colour or a history setting is no reason to drop a model that
+            # took seconds — or minutes — to load.
+            if self.config["model"] == previous["model"]:
+                return {"reloaded": True}
             self.transcriber = Transcriber(self.config)
             if self.config["model"]["preload"]:
                 threading.Thread(target=self._preload, daemon=True).start()

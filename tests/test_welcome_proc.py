@@ -78,6 +78,14 @@ class WelcomeTest(HistoryCase):
         self.assertTrue(self.done.wait(5))
         self.assertIn("unreachable", self.emitted[-1]["model"]["error"])
 
+    def test_a_failed_load_ends_the_wait(self):
+        self.statuses = [{"model": "small", "loaded": False, "loading": False,
+                          "download": None, "load_error": "no space left on device"}]
+        with mock.patch.object(welcome_proc, "WATCH_SECONDS", 0.01):
+            self.controller._watch()
+            self.assertTrue(self.done.wait(5))
+        self.assertIn("no space left", self.emitted[-1]["model"]["error"])
+
     def test_the_test_dictation_goes_through_the_shortcut(self):
         self.assertEqual(self.controller.handle({"action": "try"}), {"tried": "recording"})
 

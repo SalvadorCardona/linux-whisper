@@ -153,6 +153,10 @@ class Transcriber:
         self._model = None
         # The preload at start-up and a first dictation may ask at the same time.
         self._loading = threading.Lock()
+        # What the tray and the welcome window show while waiting: is a load
+        # under way, and how did the last one end.
+        self.loading = False
+        self.error: str | None = None
         # Target values, known even before the model is loaded.
         self.model_name, self.device, self.compute_type = self._resolve()
 
@@ -183,7 +187,15 @@ class Transcriber:
 
     def load(self) -> None:
         with self._loading:
-            self._load()
+            self.loading = True
+            try:
+                self._load()
+                self.error = None
+            except Exception as error:
+                self.error = str(error)
+                raise
+            finally:
+                self.loading = False
 
     def _load(self) -> None:
         if self._model is not None:

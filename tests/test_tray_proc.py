@@ -53,8 +53,17 @@ class MenuTest(unittest.TestCase):
         self.assertEqual(items["toggle"]["label"], "Finish the dictation")
 
     def test_a_download_shows_its_progress(self):
-        items = self.items({**READY, "loaded": False, "download": 0.42, "model": "large-v3"})
+        items = self.items({**READY, "loaded": False, "loading": True, "download": 0.42,
+                            "model": "large-v3"})
         self.assertEqual(items["status"]["label"], "Downloading large-v3 — 42 %")
+
+    def test_a_model_not_preloaded_is_not_forever_loading(self):
+        items = self.items({**READY, "loaded": False, "loading": False})
+        self.assertEqual(items["status"]["label"], "Ready — small loads at the first dictation")
+
+    def test_a_failed_load_is_said(self):
+        items = self.items({**READY, "loaded": False, "loading": False, "load_error": "disk full"})
+        self.assertIn("could not be loaded", items["status"]["label"])
 
     def test_paused_greys_the_dictation_out(self):
         items = self.items({**READY, "paused": True})

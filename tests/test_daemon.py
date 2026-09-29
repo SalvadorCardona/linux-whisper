@@ -139,6 +139,9 @@ class FakeTranscriber:
     def __init__(self):
         self.model_name, self.device, self.compute_type = "fake", "cpu", "int8"
         self.is_loaded = True
+        self.is_downloaded = True
+        self.loading = False
+        self.error = None
         self.entered = threading.Event()    # a segment has reached the model
         self.release = threading.Event()    # ... and may leave it
         self.release.set()
@@ -165,8 +168,11 @@ class ColdTranscriber(FakeTranscriber):
         return 0.5
 
     def load(self) -> None:
+        self.loading = True
         self.arrived.wait(TIMEOUT)
+        self.loading = False
         if self.failure is not None:
+            self.error = str(self.failure)
             raise self.failure
         self.is_loaded = True
 
@@ -537,7 +543,40 @@ class PauseTest(DictationCase):
         self.assertIsNone(status["download"])
 
 
+class ReloadTest(DictationCase):
+    """A saved setting reloads the daemon: the model only goes if it changed."""
+
+    def reload_with(self, **model) -> tuple[object, object]:
+        with self.service() as service:
+            before = service.transcriber
+            changed = {**service.config, "model": {**service.config["model"], **model}}
+            with mock.patch.object(daemon.config_module, "load", lambda: changed), \
+                    mock.patch.object(daemon, "Transcriber", lambda config: FakeTranscriber()):
+                self.assertEqual(service.reload(), {"reloaded": True})
+            return before, service.transcriber
+
+    def test_a_colour_keeps_the_model_in_memory(self):
+        before, after = self.reload_with()
+        self.assertIs(before, after)
+
+    def test_a_new_model_is_loaded(self):
+        before, after = self.reload_with(name="small", preload=False)
+        self.assertIsNot(before, after)
+
+
 class LoadTest(DictationCase):
+    def test_a_failed_load_is_in_the_status(self):
+        self.transcriber = ColdTranscriber(failure=RuntimeError("disk full"))
+        self.transcriber.arrived.set()
+        logging.getLogger("whisper-desk.daemon").disabled = True
+        try:
+            with self.service() as service:
+                service.load()
+                self.assertTrue(wait_until(lambda: service.status()["load_error"] == "disk full"))
+                self.assertFalse(service.status()["loading"])
+        finally:
+            logging.getLogger("whisper-desk.daemon").disabled = False
+
     def test_load_starts_the_model_in_the_background(self):
         self.transcriber = ColdTranscriber()
         with self.service() as service:
