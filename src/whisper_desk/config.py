@@ -7,6 +7,8 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
+from . import tomlwrite
+
 
 def _xdg(var: str, fallback: str) -> Path:
     value = os.environ.get(var)
@@ -27,6 +29,8 @@ CONFIG_PATH = CONFIG_DIR / "config.toml"
 STATE_DIR = _xdg("XDG_STATE_HOME", ".local/state") / "whisper-desk"
 DATA_DIR = Path.home() / ".local/share/whisper-desk"
 RUNTIME_DIR = _runtime_dir()
+# Next to src/ in the installed application, as in the repository.
+EXAMPLE_PATH = Path(__file__).resolve().parents[2] / "config.example.toml"
 
 DEFAULTS: dict[str, Any] = {
     "hotkey": {
@@ -84,8 +88,10 @@ DEFAULTS: dict[str, Any] = {
         # Hands your original clipboard back at the end of the dictation.
         "restore_clipboard": True,
         "notify": False,
-        # Logs every transcription in ~/.local/state/whisper-desk/history.log
+        # Keeps every dictation in ~/.local/state/whisper-desk/history.jsonl
         "history": True,
+        # Dictations older than this many days are dropped. 0 = kept forever.
+        "history_days": 0,
     },
     "overlay": {
         "enabled": True,
@@ -121,3 +127,25 @@ def load(path: Path | None = None) -> dict[str, Any]:
     with path.open("rb") as handle:
         user = tomllib.load(handle)
     return _merge(DEFAULTS, user)
+
+
+def update(changes: dict[str, dict[str, Any]], path: Path | None = None) -> None:
+    """Writes values into config.toml, its comments and layout kept.
+
+    A missing file starts from the commented example rather than from an
+    empty page: the user who opens it later still finds the explanations.
+    """
+    path = path or CONFIG_PATH
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        try:
+            text = EXAMPLE_PATH.read_text(encoding="utf-8")
+        except OSError:
+            text = ""
+    edited = tomlwrite.apply(text, changes)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".toml.tmp")
+    temporary.write_text(edited, encoding="utf-8")
+    # Swapped in whole: the daemon never reads half a file.
+    os.replace(temporary, path)

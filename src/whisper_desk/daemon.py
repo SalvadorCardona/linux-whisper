@@ -1,7 +1,7 @@
 """Daemon: keeps the model in memory and runs dictations on demand.
 
 Protocol: one JSON request per line on a Unix socket, one JSON response per
-line. Commands: toggle, record, stop, status, reload, quit.
+line. Commands: toggle, record, stop, status, reload, insert, quit.
 """
 
 from __future__ import annotations
@@ -13,11 +13,12 @@ import queue
 import socket
 import socketserver
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from . import config as config_module
-from . import host, hotkey, inject
+from . import history, host, hotkey, inject
 from . import output
 from .capture import CaptureUnavailable
 from .overlay_proc import OverlayProcess
@@ -28,6 +29,9 @@ logger = logging.getLogger("whisper-desk.daemon")
 
 # How often the download gauge is refreshed while the model arrives.
 PROGRESS_SECONDS = 0.25
+# Reinserting from the history: the window that asked must have closed and
+# handed the focus back, and the virtual keyboard be seen by the compositor.
+INSERT_DELAY_SECONDS = 0.6
 
 
 class ModelUnavailable(RuntimeError):
@@ -67,6 +71,7 @@ class Session:
         # Why the text did not reach the cursor: CursorWriter.failure.
         self.delivery_failure = ""
         self.parts: list[str] = []
+        self.listened = 0.0             # seconds the microphone stayed open
         self.queue: queue.Queue[bytes | None] = queue.Queue()
         self.overlay = OverlayProcess(service.config, on_event=self._on_overlay_event)
         self.recorder = Recorder(
@@ -103,7 +108,9 @@ class Session:
             worker = threading.Thread(target=self._transcribe_loop, daemon=True)
             worker.start()
 
+            started = time.monotonic()
             tail = self.recorder.record()
+            self.listened = time.monotonic() - started
             self.recording_over.set()
             if tail:
                 self.queue.put(tail)
@@ -127,11 +134,24 @@ class Session:
             logger.exception("Dictation failed")
             self._fail("Something went wrong", str(error))
         finally:
+            self._remember()
             if self.writer:
                 self.writer.close()
             self.overlay.stop()
             self.service.finish(self)
             self.done.set()
+
+    def _remember(self) -> None:
+        """One history entry per dictation — what was inserted, even if cut short."""
+        settings = self.service.config["output"]
+        if self.capture or not self.parts or not settings["history"]:
+            return
+        history.append(
+            " ".join(self.parts),
+            duration=self.listened,
+            model=self.service.transcriber.model_name,
+            keep_days=int(settings["history_days"]),
+        )
 
     def _wait_for_model(self) -> bool:
         """Shows the model arriving, and only opens the microphone once it is there.
@@ -368,6 +388,29 @@ class Service:
             if self.session is session and not session.cancelled.is_set():
                 session.cancel()
 
+    def insert(self, text: str) -> dict[str, Any]:
+        """Types a text at the cursor again — a dictation brought back from the history."""
+        if not text.strip():
+            return {"error": "nothing to insert"}
+        with self.lock:
+            if self.state != "idle":
+                return {"error": f"busy ({self.state})"}
+        threading.Thread(target=self._insert, args=(text,), daemon=True).start()
+        return {"inserting": True}
+
+    def _insert(self, text: str) -> None:
+        writer = output.CursorWriter(self.config)
+        try:
+            writer.prepare()
+            time.sleep(INSERT_DELAY_SECONDS)
+            if not writer.write(text):
+                output.notify("whisper-desk: the text could not be inserted",
+                              "It is in the clipboard.")
+        except Exception:
+            logger.exception("Reinsertion failed")
+        finally:
+            writer.close()
+
     def record(self) -> dict[str, Any]:
         with self.lock:
             if self.state != "idle":
@@ -452,6 +495,7 @@ class Handler(socketserver.StreamRequestHandler):
                 "stop": self.service.stop,
                 "status": self.service.status,
                 "reload": self.service.reload,
+                "insert": lambda: self.service.insert(str(request.get("text", ""))),
                 "ping": lambda: {"pong": True},
             }
             if command == "quit":

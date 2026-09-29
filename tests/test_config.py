@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -64,7 +65,7 @@ class LoadTest(unittest.TestCase):
             },
             "output": {
                 "mode", "paste_shortcut", "keyboard", "restore_clipboard",
-                "notify", "history",
+                "notify", "history", "history_days",
             },
             "overlay": {"enabled", "accent", "width", "height", "position", "margin"},
             "model": {
@@ -75,6 +76,16 @@ class LoadTest(unittest.TestCase):
         }
         for section, keys in expected.items():
             self.assertLessEqual(keys, set(config[section]), section)
+
+
+class ExampleTest(unittest.TestCase):
+    def test_the_example_mirrors_the_defaults(self):
+        """A default changed without its example would go unnoticed by every user."""
+        example = config_module.load(config_module.EXAMPLE_PATH)
+        with config_module.EXAMPLE_PATH.open("rb") as handle:
+            written = tomllib.load(handle)
+        self.assertEqual(written, config_module.DEFAULTS)
+        self.assertEqual(example, config_module.DEFAULTS)
 
 
 if __name__ == "__main__":

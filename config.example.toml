@@ -59,7 +59,8 @@ keyboard = "auto"
 # Hands your original clipboard back at the end of the dictation.
 restore_clipboard = true
 notify = false                  # a notification for every transcription
-history = true                  # log in ~/.local/state/whisper-desk/history.log
+history = true                  # keeps every dictation: whisper-desk history
+history_days = 0                # drops dictations older than this; 0 = kept forever
 
 [overlay]
 # Ignored if the system Python lacks PyGObject + GTK3 (common on macOS).

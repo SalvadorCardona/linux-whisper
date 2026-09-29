@@ -194,10 +194,41 @@ whisper-desk toggle     # same as the keyboard shortcut
 whisper-desk status     # daemon state, loaded model, GPU or CPU
 whisper-desk doctor     # full diagnostic
 whisper-desk update     # update the installation (--check to compare only)
+whisper-desk history    # past dictations — see below
 whisper-desk config     # open the configuration in $EDITOR
 whisper-desk reload     # reload the configuration without restarting
 whisper-desk quit       # stop the daemon
 ```
+
+### History
+
+Every dictation is kept — date, listening time, model and text — in
+`~/.local/state/whisper-desk/history.jsonl`, one JSON line per dictation. A text lost on
+the way (a window that lost the focus, an insertion that failed) can be found again,
+copied or typed again. The `history.log` of earlier versions is still read, and folded
+into the new file the first time the history is rewritten (it is kept as
+`history.log.bak`).
+
+```sh
+whisper-desk history                  # the 20 latest, numbered from 1 (the latest)
+whisper-desk history invoice friday   # search: every word, case and accents ignored
+whisper-desk history -n 0             # all of them
+whisper-desk history --copy 3         # copies dictation 3 to the clipboard
+whisper-desk history --delete 3       # deletes it
+whisper-desk history --keep-days 30   # deletes dictations older than 30 days, from now on
+whisper-desk history --clear          # deletes everything
+whisper-desk history --window         # the window below
+```
+
+<p align="center">
+  <img src="docs/history-window.png" alt="The history window: search, copy, insert again, delete" width="560">
+</p>
+
+The window lists the dictations newest first, with a search field (`Ctrl+F`), and for
+each one **Copy**, **Insert** — the window closes and the daemon types the text where
+your cursor was — and a bin that asks for a second click. At the bottom, *Keep
+dictations* sets the automatic purge. It needs GTK3 for the system Python, like the
+overlay; without it, the command line does the same.
 
 ---
 
@@ -228,7 +259,8 @@ paste_shortcut = "auto"       # "shift+insert" if you mostly dictate in a termin
 keyboard = "auto"             # auto | uinput | windows | applescript | none
 restore_clipboard = true      # hands your original clipboard back at the end
 notify = false
-history = true                # log in ~/.local/state/whisper-desk/history.log
+history = true                # keeps every dictation: whisper-desk history
+history_days = 0              # dictations older than this are deleted; 0 = kept forever
 
 [overlay]
 enabled = true
@@ -427,6 +459,9 @@ to test all three from any of them.
 | `src/whisper_desk/output.py` | insertion at the cursor, clipboard, notifications |
 | `src/whisper_desk/overlay.py` | X11 overlay (separate process) |
 | `src/whisper_desk/overlay_protocol.py` | the line protocol between the daemon and the overlay |
+| `src/whisper_desk/history.py` | dictation history (JSON Lines), search, purge |
+| `src/whisper_desk/history_window.py` | history window (GTK3, separate process) |
+| `src/whisper_desk/tomlwrite.py` | writing `config.toml` while keeping its comments |
 | `src/whisper_desk/hotkey.py` | global shortcut: GNOME, Start menu, `skhd` |
 | `src/whisper_desk/service.py` | daemon startup: systemd, launchd or direct |
 | `src/whisper_desk/update.py` | version fingerprint, comparison with upstream, update |

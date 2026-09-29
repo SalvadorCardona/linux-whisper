@@ -422,6 +422,82 @@ class FeedbackTest(DictationCase):
         self.assertEqual(self.delivered, [])
 
 
+class HistoryTest(DictationCase):
+    """One entry per dictation, whatever the number of sentences it took."""
+
+    def setUp(self):
+        super().setUp()
+        self.recorded: list[tuple[str, dict]] = []
+        patcher = mock.patch.object(
+            daemon.history, "append",
+            lambda text, **kwargs: self.recorded.append((text, kwargs)),
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = mock.patch.dict(
+            CONFIG, {"output": {**CONFIG["output"], "history": True, "history_days": 30}}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def dictate(self) -> None:
+        with self.service() as service:
+            self.listening(service)
+            service.toggle()
+            self.assertTrue(wait_until(lambda: service.session is None))
+
+    def test_the_sentences_make_one_entry(self):
+        self.recorder.segments[:] = [b"first", b"second"]
+        self.dictate()
+        self.assertEqual(len(self.recorded), 1)
+        text, details = self.recorded[0]
+        self.assertEqual(text, "first second")
+        self.assertEqual(details["model"], "fake")
+        self.assertEqual(details["keep_days"], 30)
+        self.assertGreaterEqual(details["duration"], 0.0)
+
+    def test_nothing_said_leaves_no_entry(self):
+        self.recorder.segments[:] = []
+        self.dictate()
+        self.assertEqual(self.recorded, [])
+
+
+class InsertTest(DictationCase):
+    """A dictation brought back from the history is typed by the daemon."""
+
+    def test_the_daemon_types_the_text_again(self):
+        written: list[str] = []
+
+        class Writer:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            def prepare(self):
+                pass
+
+            def write(self, text):
+                written.append(text)
+                return True
+
+            def close(self):
+                pass
+
+        with self.service() as service, \
+                mock.patch.object(daemon.output, "CursorWriter", Writer), \
+                mock.patch.object(daemon, "INSERT_DELAY_SECONDS", 0):
+            self.assertEqual(service.insert("hello again"), {"inserting": True})
+            self.assertTrue(wait_until(lambda: written == ["hello again"]))
+
+    def test_not_over_a_dictation(self):
+        with self.service() as service:
+            self.listening(service)
+            self.assertIn("error", service.insert("hello again"))
+
+    def test_nothing_to_insert(self):
+        with self.service() as service:
+            self.assertIn("error", service.insert("  "))
+
+
 class LoadingTest(DictationCase):
     """A model still on its way is shown, and the microphone waits for it."""
 

@@ -31,7 +31,8 @@ def _connect(timeout: float) -> socket.socket:
     return client
 
 
-def send(command: str, timeout: float = 300.0, autostart: bool = True) -> dict[str, Any]:
+def send(command: str, timeout: float = 300.0, autostart: bool = True,
+         **arguments: Any) -> dict[str, Any]:
     """Sends a command to the daemon, starting it if need be."""
     unreachable = DaemonUnavailable(
         f"daemon unreachable — run '{service.hint()}'"
@@ -48,7 +49,7 @@ def send(command: str, timeout: float = 300.0, autostart: bool = True) -> dict[s
             raise unreachable from None
 
     try:
-        client.sendall((json.dumps({"cmd": command}) + "\n").encode("utf-8"))
+        client.sendall((json.dumps({"cmd": command, **arguments}) + "\n").encode("utf-8"))
         with client.makefile("rb") as stream:
             raw = stream.readline()
     except OSError as error:      # a timeout is one of these

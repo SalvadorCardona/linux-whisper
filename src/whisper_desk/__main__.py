@@ -129,6 +129,79 @@ def cmd_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _history_line(number: int, entry, width: int | None) -> str:
+    """One dictation on one line: number, date, duration, model, then the text."""
+    stamp = entry.date.replace("T", " ")[:16]
+    duration = f"{entry.duration:5.1f} s" if entry.duration is not None else " " * 7
+    head = f"{number:>4}  {stamp}  {duration}  {(entry.model or '-'):<14}  "
+    text = " ".join(entry.text.split())
+    if width and len(head) + len(text) > width:
+        text = text[: max(width - len(head) - 1, 10)] + "…"
+    return head + text
+
+
+def cmd_history(args: argparse.Namespace) -> int:
+    """Past dictations: list, search, copy, delete — or the window that does it all."""
+    from . import history, output
+
+    config = config_module.load()
+    if args.window:
+        from . import history_proc
+        from .client import send
+
+        controller = history_proc.HistoryController(
+            config, copy=lambda text: output.copy(text), send=send
+        )
+        try:
+            history_proc.open_window(controller)
+        except history_proc.WindowUnavailable as error:
+            return _print_error(f"{error} — 'whisper-desk history' lists them here instead")
+        return 0
+
+    if args.keep_days is not None:
+        days = max(args.keep_days, 0)
+        config_module.update({"output": {"history_days": days}})
+        removed = history.purge(days)
+        print("Dictations are kept forever." if days == 0 else
+              f"Dictations older than {days} days are deleted ({removed} removed now).")
+        print("Run 'whisper-desk reload' for the daemon to apply it.")
+        return 0
+    if args.clear:
+        print(f"{history.clear()} dictation(s) deleted.")
+        return 0
+
+    entries = history.load()
+    for number in (args.copy, args.delete):
+        if number is not None and not 1 <= number <= len(entries):
+            return _print_error(f"no dictation number {number} — there are {len(entries)}")
+    if args.copy is not None:
+        entry = entries[history.index_of(args.copy, entries)]
+        if not output.copy(entry.text):
+            return _print_error("no clipboard tool answered — see 'whisper-desk doctor'")
+        print(f"Copied: {entry.text}")
+        return 0
+    if args.delete is not None:
+        removed = history.delete(history.index_of(args.delete, entries))
+        print(f"Deleted: {removed.text}")
+        return 0
+
+    query = " ".join(args.query)
+    shown = [
+        (number, entry) for number, entry in history.numbered(entries)
+        if not query or history.matches(entry, query)
+    ]
+    if args.limit > 0:
+        shown = shown[: args.limit]
+    if not shown:
+        print("No dictation matches." if query else "No dictation yet.")
+        return 0
+    width = shutil.get_terminal_size().columns if sys.stdout.isatty() else None
+    # The oldest at the top, the latest just above the prompt.
+    for number, entry in reversed(shown):
+        print(_history_line(number, entry, width))
+    return 0
+
+
 def _config_bytes() -> bytes | None:
     try:
         return config_module.CONFIG_PATH.read_bytes()
@@ -481,6 +554,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="only compares the versions: exit 0 up to date, 1 something new, 2 cannot tell",
     )
     update_parser.set_defaults(func=cmd_update)
+
+    history_parser = sub.add_parser(
+        "history",
+        help="past dictations: list, search, copy, delete",
+        description="Past dictations, numbered from 1 (the latest).",
+    )
+    history_parser.add_argument("query", nargs="*", help="words to look for (case and accents ignored)")
+    history_parser.add_argument(
+        "-n", "--limit", type=int, default=20, help="how many to show (0: all; default 20)"
+    )
+    history_parser.add_argument("--copy", type=int, metavar="N", help="copies dictation N")
+    history_parser.add_argument("--delete", type=int, metavar="N", help="deletes dictation N")
+    history_parser.add_argument("--clear", action="store_true", help="deletes every dictation")
+    history_parser.add_argument(
+        "--keep-days", type=int, metavar="DAYS",
+        help="deletes dictations older than DAYS from now on (0: keep them all)",
+    )
+    history_parser.add_argument(
+        "--window", action="store_true", help="opens the history window (GTK)"
+    )
+    history_parser.set_defaults(func=cmd_history)
 
     hotkey_parser = sub.add_parser("hotkey", help="manages the global shortcut")
     hotkey_parser.add_argument(

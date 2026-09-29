@@ -8,11 +8,9 @@ import logging
 import shutil
 import subprocess
 import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from . import config as config_module
 from . import host
 from .inject import keyboard, resolve_shortcut
 from .overlay_proc import system_python
@@ -273,21 +271,6 @@ def notify(summary: str, body: str = "") -> None:
     logger.debug("Notification skipped: no display method available.")
 
 
-def log_history(text: str) -> None:
-    # Later sentences arrive preceded by a joining space, which makes no sense
-    # once the line stands alone in the log.
-    entry = text.strip()
-    if not entry:
-        return
-    try:
-        config_module.STATE_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = datetime.now().isoformat(timespec="seconds")
-        with (config_module.STATE_DIR / "history.log").open("a", encoding="utf-8") as handle:
-            handle.write(f"{stamp}\t{entry}\n")
-    except OSError as error:
-        logger.warning("History not written: %s", error)
-
-
 def modes(config: dict[str, Any]) -> set[str]:
     raw = str(config["output"]["mode"])
     found = {mode.strip() for mode in raw.split("+") if mode.strip()}
@@ -312,8 +295,6 @@ def deliver(text: str, config: dict[str, Any], writer: CursorWriter | None = Non
         delivered = copy(text, overlay=overlay) and delivered
     if "stdout" in selected:
         print(text, flush=True)
-    if settings["history"]:
-        log_history(text)
     if settings["notify"]:
         preview = text if len(text) <= 140 else text[:139] + "…"
         notify("Transcription", preview)

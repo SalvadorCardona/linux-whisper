@@ -330,6 +330,7 @@
   .shot{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;text-align:center}
   .shot img{width:100%;max-width:336px;height:auto;border-radius:8px}
   .shot span{display:block;margin-top:12px;font-size:13px;color:var(--dim)}
+  .shot.wide img{max-width:680px}
 
   /* author card */
   .author{
@@ -637,9 +638,32 @@
 <span class="p">$ </span>whisper-desk status     <span class="c"># daemon state, loaded model, GPU or CPU</span>
 <span class="p">$ </span>whisper-desk doctor     <span class="c"># full diagnostic</span>
 <span class="p">$ </span>whisper-desk update     <span class="c"># update the installation (--check to compare only)</span>
+<span class="p">$ </span>whisper-desk history    <span class="c"># past dictations — see below</span>
 <span class="p">$ </span>whisper-desk config     <span class="c"># open the configuration in $EDITOR</span>
 <span class="p">$ </span>whisper-desk reload     <span class="c"># reload the configuration without restarting</span>
 <span class="p">$ </span>whisper-desk quit       <span class="c"># stop the daemon</span></pre>
+
+    <h3>History</h3>
+    <p>
+      Every dictation is kept — date, listening time, model and text — in
+      <code>~/.local/state/whisper-desk/history.jsonl</code>. A text lost on the way can be found
+      again, copied or typed again at the cursor. The <code>history.log</code> of earlier versions is still read.
+    </p>
+    <pre data-copy><span class="p">$ </span>whisper-desk history                  <span class="c"># the 20 latest, numbered from 1 (the latest)</span>
+<span class="p">$ </span>whisper-desk history invoice friday   <span class="c"># search: every word, case and accents ignored</span>
+<span class="p">$ </span>whisper-desk history --copy 3         <span class="c"># copies dictation 3 to the clipboard</span>
+<span class="p">$ </span>whisper-desk history --delete 3       <span class="c"># deletes it</span>
+<span class="p">$ </span>whisper-desk history --keep-days 30   <span class="c"># deletes dictations older than 30 days, from now on</span>
+<span class="p">$ </span>whisper-desk history --window         <span class="c"># the history window</span></pre>
+    <div class="shots">
+      <div class="shot wide">
+        <picture>
+          <source srcset="history-window.webp" type="image/webp">
+          <img src="history-window.png" alt="The whisper-desk history window: search, copy, insert again, delete" width="680" height="649" loading="lazy">
+        </picture>
+        <span>Search, <b>Copy</b>, <b>Insert</b> again where the cursor was, delete — and the automatic purge</span>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -673,7 +697,8 @@ paste_shortcut = <span class="s">"auto"</span>       <span class="c"># "shift+in
 keyboard = <span class="s">"auto"</span>             <span class="c"># auto | uinput | windows | applescript | none</span>
 restore_clipboard = <span class="n">true</span>      <span class="c"># hands your original clipboard back at the end</span>
 notify = <span class="n">false</span>
-history = <span class="n">true</span>               <span class="c"># log in ~/.local/state/whisper-desk/history.log</span>
+history = <span class="n">true</span>               <span class="c"># keeps every dictation: whisper-desk history</span>
+history_days = <span class="n">0</span>             <span class="c"># dictations older than this are deleted; 0 = kept forever</span>
 
 <span class="k">[overlay]</span>
 enabled = <span class="n">true</span>
@@ -777,6 +802,9 @@ margin = <span class="n">96</span></pre>
           <tr><td><code>output.py</code></td><td>insertion at the cursor, clipboard, notifications</td></tr>
           <tr><td><code>overlay.py</code></td><td>X11 overlay (separate process)</td></tr>
           <tr><td><code>overlay_protocol.py</code></td><td>the line protocol between the daemon and the overlay</td></tr>
+          <tr><td><code>history.py</code></td><td>dictation history (JSON Lines), search, purge</td></tr>
+          <tr><td><code>history_window.py</code></td><td>history window (GTK3, separate process)</td></tr>
+          <tr><td><code>tomlwrite.py</code></td><td>writing <code>config.toml</code> while keeping its comments</td></tr>
           <tr><td><code>hotkey.py</code></td><td>global shortcut: GNOME, Start menu, <code>skhd</code></td></tr>
           <tr><td><code>service.py</code></td><td>daemon startup: systemd, launchd or direct</td></tr>
         </tbody>

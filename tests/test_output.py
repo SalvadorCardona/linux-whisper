@@ -1,9 +1,8 @@
-"""Output modes, history log, clipboard per host."""
+"""Output modes, delivery, clipboard per host."""
 
 from __future__ import annotations
 
 import codecs
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -40,41 +39,6 @@ class ModesTest(unittest.TestCase):
 
     def test_the_project_default_inserts_at_the_cursor(self):
         self.assertIn("cursor", output.modes(config_module.load(Path("/nonexistent"))))
-
-
-class HistoryTest(unittest.TestCase):
-    def setUp(self):
-        self.directory = tempfile.TemporaryDirectory()
-        self.previous = config_module.STATE_DIR
-        config_module.STATE_DIR = Path(self.directory.name) / "state"
-        self.addCleanup(self.directory.cleanup)
-        self.addCleanup(setattr, config_module, "STATE_DIR", self.previous)
-
-    def lines(self) -> list[str]:
-        return (config_module.STATE_DIR / "history.log").read_text(
-            encoding="utf-8"
-        ).splitlines()
-
-    def test_one_line_per_transcription(self):
-        output.log_history("hello")
-        output.log_history("goodbye")
-        self.assertEqual([line.split("\t", 1)[1] for line in self.lines()],
-                         ["hello", "goodbye"])
-
-    def test_the_joining_space_does_not_survive_into_the_log(self):
-        """Later sentences arrive as " next" for the insertion."""
-        output.log_history(" rest of the sentence")
-        self.assertEqual(self.lines()[0].split("\t", 1)[1], "rest of the sentence")
-
-    def test_nothing_to_log(self):
-        output.log_history("   ")
-        self.assertFalse((config_module.STATE_DIR / "history.log").exists())
-
-    def test_timestamp_present(self):
-        output.log_history("test")
-        stamp, text = self.lines()[0].split("\t", 1)
-        self.assertEqual(text, "test")
-        self.assertRegex(stamp, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$")
 
 
 class ShortcutTest(unittest.TestCase):
