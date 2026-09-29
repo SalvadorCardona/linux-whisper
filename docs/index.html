@@ -639,6 +639,7 @@
 <span class="p">$ </span>whisper-desk doctor     <span class="c"># full diagnostic</span>
 <span class="p">$ </span>whisper-desk update     <span class="c"># update the installation (--check to compare only)</span>
 <span class="p">$ </span>whisper-desk history    <span class="c"># past dictations — see below</span>
+<span class="p">$ </span>whisper-desk settings   <span class="c"># the settings window</span>
 <span class="p">$ </span>whisper-desk config     <span class="c"># open the configuration in $EDITOR</span>
 <span class="p">$ </span>whisper-desk reload     <span class="c"># reload the configuration without restarting</span>
 <span class="p">$ </span>whisper-desk quit       <span class="c"># stop the daemon</span></pre>
@@ -672,8 +673,27 @@
     <div class="sec-head">
       <span class="sec-num">04 — Configuration</span>
       <h2>Everything fits in one file.</h2>
-      <p><code>~/.config/whisper-desk/config.toml</code></p>
+      <p><code>~/.config/whisper-desk/config.toml</code> — or, for the essentials, a window.</p>
     </div>
+
+    <pre data-copy><span class="p">$ </span>whisper-desk settings</pre>
+    <p>
+      Language, model (with its size, its speed and whether it is already downloaded), microphone
+      with a test gauge, shortcut captured from the keyboard, output mode, vocabulary, overlay
+      position and colour. <b>Save</b> writes only what changed — your comments are kept — and
+      reloads the daemon.
+    </p>
+    <div class="shots">
+      <div class="shot wide">
+        <picture>
+          <source srcset="settings-window.webp" type="image/webp">
+          <img src="settings-window.png" alt="The whisper-desk settings window" width="672" height="819" loading="lazy">
+        </picture>
+        <span>The settings window — no TOML to edit</span>
+      </div>
+    </div>
+
+    <p>The file holds everything else:</p>
 
     <pre data-copy><span class="k">[hotkey]</span>
 binding = <span class="s">"auto"</span>              <span class="c"># "auto", or &lt;Ctrl&gt;/&lt;Alt&gt;/&lt;Shift&gt;/&lt;Super&gt; + a key</span>
@@ -805,6 +825,7 @@ margin = <span class="n">96</span></pre>
           <tr><td><code>history.py</code></td><td>dictation history (JSON Lines), search, purge</td></tr>
           <tr><td><code>history_window.py</code></td><td>history window (GTK3, separate process)</td></tr>
           <tr><td><code>tomlwrite.py</code></td><td>writing <code>config.toml</code> while keeping its comments</td></tr>
+          <tr><td><code>settings_window.py</code></td><td>settings window (GTK3, separate process)</td></tr>
           <tr><td><code>hotkey.py</code></td><td>global shortcut: GNOME, Start menu, <code>skhd</code></td></tr>
           <tr><td><code>service.py</code></td><td>daemon startup: systemd, launchd or direct</td></tr>
         </tbody>

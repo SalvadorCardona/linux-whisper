@@ -6,21 +6,14 @@ asks the daemon to type a text again, and writes the purge setting.
 
 from __future__ import annotations
 
-import json
-import subprocess
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
 from . import config as config_module
-from . import history, hotkey, output
-from .overlay_proc import gtk_available, system_python
+from . import history, hotkey, output, window_proc
 
 WINDOW_SCRIPT = Path(__file__).with_name("history_window.py")
-
-
-class WindowUnavailable(RuntimeError):
-    """No GTK3 for the system Python: the command line remains."""
 
 
 class HistoryController:
@@ -109,37 +102,4 @@ class HistoryController:
 
 def open_window(controller: HistoryController) -> int:
     """Shows the window until it is closed; returns the window's exit code."""
-    if not gtk_available():
-        raise WindowUnavailable("GTK3 is missing from the system Python")
-    process = subprocess.Popen(
-        [system_python(), str(WINDOW_SCRIPT)],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-    )
-    assert process.stdin is not None and process.stdout is not None
-
-    def show(message: dict[str, Any]) -> None:
-        try:
-            process.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
-            process.stdin.flush()
-        except (BrokenPipeError, OSError, ValueError):
-            pass
-
-    show(controller.snapshot())
-    for line in process.stdout:
-        try:
-            request = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(request, dict):
-            continue
-        reply = controller.handle(request)
-        if reply is not None:
-            show(reply)
-    try:
-        process.stdin.close()
-    except OSError:
-        pass
-    return process.wait()
+    return window_proc.run(WINDOW_SCRIPT, controller.snapshot(), controller.handle)

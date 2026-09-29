@@ -146,7 +146,7 @@ def cmd_history(args: argparse.Namespace) -> int:
 
     config = config_module.load()
     if args.window:
-        from . import history_proc
+        from . import history_proc, window_proc
         from .client import send
 
         controller = history_proc.HistoryController(
@@ -154,7 +154,7 @@ def cmd_history(args: argparse.Namespace) -> int:
         )
         try:
             history_proc.open_window(controller)
-        except history_proc.WindowUnavailable as error:
+        except window_proc.WindowUnavailable as error:
             return _print_error(f"{error} — 'whisper-desk history' lists them here instead")
         return 0
 
@@ -199,6 +199,18 @@ def cmd_history(args: argparse.Namespace) -> int:
     # The oldest at the top, the latest just above the prompt.
     for number, entry in reversed(shown):
         print(_history_line(number, entry, width))
+    return 0
+
+
+def cmd_settings(_args: argparse.Namespace) -> int:
+    """The settings window: the essentials of config.toml without opening it."""
+    from . import settings_proc, window_proc
+    from .client import send
+
+    try:
+        settings_proc.open_window(config_module.load(), f"{BIN} toggle", send)
+    except window_proc.WindowUnavailable as error:
+        return _print_error(f"{error} — 'whisper-desk config' opens the file instead")
     return 0
 
 
@@ -581,6 +593,10 @@ def build_parser() -> argparse.ArgumentParser:
         "hotkey_action", nargs="?", default="install", choices=("install", "remove", "show")
     )
     hotkey_parser.set_defaults(func=cmd_hotkey)
+
+    sub.add_parser(
+        "settings", help="settings window: language, model, microphone, shortcut…"
+    ).set_defaults(func=cmd_settings)
 
     config_parser = sub.add_parser("config", help="user configuration")
     config_parser.add_argument(

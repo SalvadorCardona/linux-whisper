@@ -80,7 +80,8 @@ le dupliquer ici.
 - **L'overlay tourne hors du venv.** `overlay.py` et `overlay_proc.py` s'exécutent
   avec le Python système (celui qui a PyGObject), jamais avec celui du venv : ne pas
   leur ajouter de dépendance qui ne serait installée que côté venv. Même règle pour
-  `history_window.py`, vue pure pilotée en JSON par `history_proc.py` (côté venv).
+  `history_window.py` et `settings_window.py`, vues pures pilotées en JSON par
+  `history_proc.py` et `settings_proc.py` (côté venv, via `window_proc.py`).
 - **`overlay_protocol.py` est importé par `overlay.py` comme un script voisin**, pas
   comme un module du package : stdlib seule, et aucun import relatif.
 - **Le raccourci clavier installé une première fois n'est jamais réécrit** par
@@ -90,6 +91,6 @@ le dupliquer ici.
   s'exécuter tant qu'une transcription est en cours plutôt que de la couper.
 - **`config.example.toml` et les valeurs par défaut de `config.py` doivent rester en
   miroir** : un changement dans `DEFAULTS` sans le répercuter dans l'exemple part en
-  silence.
+  silence — `tests/test_config.py` le vérifie désormais.
 - Les tests skippés (`numpy` absent, notamment) sont normaux dans cet environnement ;
   ce n'est pas un échec à corriger.

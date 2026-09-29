@@ -7,7 +7,7 @@
 # Windows key for itself and only accepts global shortcuts based on Ctrl+Alt.
 binding = "auto"
 name = "whisper-desk"
-# To apply a shortcut change: whisper-desk hotkey install
+# To apply a shortcut change: whisper-desk hotkey install — whisper-desk settings does it for you
 action = "toggle"
 
 [model]

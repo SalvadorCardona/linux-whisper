@@ -195,6 +195,7 @@ whisper-desk status     # daemon state, loaded model, GPU or CPU
 whisper-desk doctor     # full diagnostic
 whisper-desk update     # update the installation (--check to compare only)
 whisper-desk history    # past dictations — see below
+whisper-desk settings   # the settings window — see Configuration
 whisper-desk config     # open the configuration in $EDITOR
 whisper-desk reload     # reload the configuration without restarting
 whisper-desk quit       # stop the daemon
@@ -234,7 +235,24 @@ overlay; without it, the command line does the same.
 
 ## Configuration
 
-Everything is configurable in **`~/.config/whisper-desk/config.toml`**:
+The essentials are set in a window, without touching any file:
+
+```sh
+whisper-desk settings
+```
+
+<p align="center">
+  <img src="docs/settings-window.png" alt="The settings window: language, model, microphone, shortcut, output, overlay" width="520">
+</p>
+
+Language; model, with its download size and an indication of its speed (and whether it is
+already on disk); microphone, from the list of the capture tool's own sources, with a
+**Test** gauge; shortcut, captured by pressing the new combination; output mode;
+domain vocabulary; overlay position and colour. **Save** writes `config.toml` — only the
+values that changed, your comments kept — reloads the daemon and, for a new shortcut,
+installs it. Like the overlay, the window needs GTK3 for the system Python.
+
+Everything, the rest included, is configurable in **`~/.config/whisper-desk/config.toml`**:
 
 ```toml
 [hotkey]
@@ -269,7 +287,7 @@ position = "bottom-center"    # bottom-center | top-center | center
 margin = 96
 ```
 
-After a change:
+After a change by hand (the settings window does both for you):
 
 ```sh
 whisper-desk reload            # for everything but the shortcut
@@ -462,6 +480,8 @@ to test all three from any of them.
 | `src/whisper_desk/history.py` | dictation history (JSON Lines), search, purge |
 | `src/whisper_desk/history_window.py` | history window (GTK3, separate process) |
 | `src/whisper_desk/tomlwrite.py` | writing `config.toml` while keeping its comments |
+| `src/whisper_desk/settings_window.py` | settings window (GTK3, separate process) |
+| `src/whisper_desk/window_proc.py` | driving the GTK windows over JSON lines |
 | `src/whisper_desk/hotkey.py` | global shortcut: GNOME, Start menu, `skhd` |
 | `src/whisper_desk/service.py` | daemon startup: systemd, launchd or direct |
 | `src/whisper_desk/update.py` | version fingerprint, comparison with upstream, update |
