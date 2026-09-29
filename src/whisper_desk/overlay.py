@@ -20,6 +20,7 @@ import ctypes
 import ctypes.util
 import math
 import os
+import signal
 import sys
 import threading
 
@@ -710,6 +711,9 @@ def main(argv: list[str]) -> int:
     window.escape = EscapeKey(window.on_user_cancel).start()
     window._refresh_caption()
     window.connect("destroy", Gtk.main_quit)
+    # A new dictation dismisses the window still showing the last one: the
+    # orders already queued — a clipboard to hand back — go through first.
+    GLib.unix_signal_add(GLib.PRIORITY_LOW, signal.SIGTERM, lambda: Gtk.main_quit() or False)
     window.show_all()
     threading.Thread(target=read_commands, args=(window,), daemon=True).start()
     Gtk.main()
