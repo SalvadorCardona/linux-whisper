@@ -85,11 +85,31 @@ That's all. The script recognises the host — Linux, WSL or macOS — and adapt
 3. installs the `whisper-desk` command in `~/.local/bin`;
 4. enables the user service — **systemd** on Linux and WSL, **launchd** on macOS —
    started automatically at login;
-5. registers the global shortcut with the host's shortcut manager.
+5. registers the global shortcut with the host's shortcut manager;
+6. adds **Settings** and **History** to the applications menu, and the tray icon to the
+   programs started at login (Linux);
+7. on a first installation, opens the **welcome window**.
 
 The Whisper model (a few hundred MB) is downloaded the first time the service starts. A
 dictation started before it has arrived shows the download on the overlay, and the
 microphone only opens once the model is ready.
+
+### First launch
+
+The welcome window walks through four steps: the microphone, with a gauge that must move
+when you speak; the language and the model; the download, with its progress; then your
+shortcut, and a first dictation into a text box. It opens once, after the first
+installation (`WD_NO_WELCOME=1` skips it); `whisper-desk welcome` opens it again.
+
+<p align="center">
+  <img src="docs/welcome-microphone.png" alt="Welcome, step 1: the microphone gauge" width="400">
+  &nbsp;
+  <img src="docs/welcome-download.png" alt="Welcome, step 3: the model download" width="400">
+  <br>
+  <img src="docs/welcome-model.png" alt="Welcome, step 2: language and model" width="400">
+  &nbsp;
+  <img src="docs/welcome-try.png" alt="Welcome, step 4: the shortcut and a first dictation" width="400">
+</p>
 
 Once installed, updates go through the command itself: [`whisper-desk update`](#updating).
 
@@ -123,6 +143,21 @@ forced in the configuration.
 
 ```sh
 whisper-desk doctor
+```
+
+Each line is ✓ (fine), ✗ (to fix) or ⚠ (optional: whisper-desk works without), and every
+failure comes with the line that fixes it:
+
+```
+System — Linux
+  ✓ microphone capture — arecord, ffmpeg
+  ✗ the microphone picks up sound ('default') — average level 0, peak 0
+      → check the default source: wpctl status — or pick another one in whisper-desk settings
+  ✓ clipboard — wl-copy
+  ⚠ tray indicator — GNOME shows no tray icon without an extension
+      → install and enable gnome-shell-extension-appindicator — meanwhile, Settings and History are in the applications menu
+
+1 problem to fix — the → lines above say how.
 ```
 
 ---
@@ -196,10 +231,28 @@ whisper-desk doctor     # full diagnostic
 whisper-desk update     # update the installation (--check to compare only)
 whisper-desk history    # past dictations — see below
 whisper-desk settings   # the settings window — see Configuration
+whisper-desk welcome    # the first-launch window, again
+whisper-desk tray       # the tray icon — see below
+whisper-desk pause      # the shortcut is ignored until 'whisper-desk resume'
 whisper-desk config     # open the configuration in $EDITOR
 whisper-desk reload     # reload the configuration without restarting
 whisper-desk quit       # stop the daemon
 ```
+
+### Tray icon
+
+An icon in the system tray says whether the service runs, with which model and which
+microphone, and holds a menu: start or finish a dictation, **History…**, **Settings…**,
+**Pause dictation** (the shortcut then says it is paused instead of listening), **Quit**.
+It starts with the session on Linux, and needs the AppIndicator library for the system
+Python (`gir1.2-ayatanaappindicator3-0.1`).
+
+**GNOME shows no tray icon by itself.** Without the
+[AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/)
+(`gnome-shell-extension-appindicator`, enabled by default on Ubuntu), the icon has nowhere
+to appear — `whisper-desk doctor` says so. The alternative is already there: **whisper-desk
+Settings** and **whisper-desk History** are in the applications menu, the overlay says
+everything about a dictation, and `whisper-desk status` tells the service's state.
 
 ### History
 
@@ -435,8 +488,8 @@ fallback (often missing CUDA libraries or not enough VRAM).
 curl -LsSf https://raw.githubusercontent.com/SalvadorCardona/whisper-desk/main/uninstall.sh | sh
 ```
 
-Add `WD_PURGE=1` to remove the configuration and the history as well. Downloaded models
-stay in `~/.cache/huggingface`.
+The menu entries and the tray icon go with it. Add `WD_PURGE=1` to remove the
+configuration and the history as well. Downloaded models stay in `~/.cache/huggingface`.
 
 ---
 
@@ -482,6 +535,9 @@ to test all three from any of them.
 | `src/whisper_desk/tomlwrite.py` | writing `config.toml` while keeping its comments |
 | `src/whisper_desk/settings_window.py` | settings window (GTK3, separate process) |
 | `src/whisper_desk/window_proc.py` | driving the GTK windows over JSON lines |
+| `src/whisper_desk/welcome_window.py` | first-launch window (GTK3, separate process) |
+| `src/whisper_desk/tray_window.py` | tray icon (AppIndicator, separate process) |
+| `desktop/` | applications-menu entries and the tray's autostart entry |
 | `src/whisper_desk/hotkey.py` | global shortcut: GNOME, Start menu, `skhd` |
 | `src/whisper_desk/service.py` | daemon startup: systemd, launchd or direct |
 | `src/whisper_desk/update.py` | version fingerprint, comparison with upstream, update |

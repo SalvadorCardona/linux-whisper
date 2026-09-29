@@ -1,7 +1,8 @@
 """Daemon: keeps the model in memory and runs dictations on demand.
 
 Protocol: one JSON request per line on a Unix socket, one JSON response per
-line. Commands: toggle, record, stop, status, reload, insert, quit.
+line. Commands: toggle, record, stop, status, reload, load, insert, pause,
+resume, quit.
 """
 
 from __future__ import annotations
@@ -356,6 +357,8 @@ class Service:
         self.state = "idle"
         self.session: Session | None = None
         self.lock = threading.Lock()
+        # Paused from the tray: the shortcut says so instead of listening.
+        self.paused = False
 
     # -- commands ----------------------------------------------------------
     def toggle(self) -> dict[str, Any]:
@@ -369,6 +372,9 @@ class Service:
         """
         with self.lock:
             session = self.session
+            if session is None and self.paused:
+                threading.Thread(target=self._show_paused, daemon=True).start()
+                return {"state": "paused"}
             if session is None:
                 self._start(capture=False)
                 return {"state": "recording"}
@@ -429,14 +435,45 @@ class Service:
             return {"state": self.state}
 
     def status(self) -> dict[str, Any]:
+        loaded = self.transcriber.is_loaded
         return {
             "state": self.state,
             "host": host.name(),
             "model": self.transcriber.model_name,
             "device": self.transcriber.device,
             "compute_type": self.transcriber.compute_type,
-            "loaded": self.transcriber.is_loaded,
+            "loaded": loaded,
+            # What the tray and the welcome window show without asking twice.
+            "microphone": str(self.config["recording"]["device"]),
+            "paused": self.paused,
+            "download": None if loaded or self.transcriber.is_downloaded
+            else self.transcriber.download_progress(),
         }
+
+    def load(self) -> dict[str, Any]:
+        """Loads — and first downloads — the model now, rather than at the first dictation."""
+        if not self.transcriber.is_loaded:
+            threading.Thread(target=self._preload, daemon=True).start()
+        return {"loaded": self.transcriber.is_loaded}
+
+    def pause(self) -> dict[str, Any]:
+        self.paused = True
+        return {"paused": True}
+
+    def resume(self) -> dict[str, Any]:
+        self.paused = False
+        return {"paused": False}
+
+    def _show_paused(self) -> None:
+        """The shortcut pressed while paused: say it, rather than ignore it."""
+        title, detail = "whisper-desk is paused", "Resume it from the tray, or: whisper-desk resume"
+        overlay = OverlayProcess(self.config)
+        overlay.start("paused")
+        if overlay.alive:
+            overlay.set_state("paused", title, detail)
+            overlay.stop()
+        else:
+            output.notify(title, detail)
 
     def reload(self) -> dict[str, Any]:
         with self.lock:
@@ -496,6 +533,9 @@ class Handler(socketserver.StreamRequestHandler):
                 "status": self.service.status,
                 "reload": self.service.reload,
                 "insert": lambda: self.service.insert(str(request.get("text", ""))),
+                "load": self.service.load,
+                "pause": self.service.pause,
+                "resume": self.service.resume,
                 "ping": lambda: {"pong": True},
             }
             if command == "quit":

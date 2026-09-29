@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=whisper-desk History
+Comment=Find, copy or insert again a past dictation
+Exec=@BIN@ history --window
+Icon=audio-input-microphone
+Terminal=false
+Categories=Utility;
+Keywords=dictation;voice;speech;whisper;history;

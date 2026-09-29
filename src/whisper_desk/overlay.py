@@ -74,7 +74,7 @@ FADE_SECONDS = 0.16
 WIDEN_RATE = 0.28          # share of the gap to the target width closed per frame
 # How long a final state stays up once the daemon has said goodbye: a success
 # is glanced at, an error has to be read.
-LINGER = {"done": 1.1, "error": 3.2, "cancelled": 0.8}
+LINGER = {"done": 1.1, "error": 3.2, "cancelled": 0.8, "paused": 2.2}
 
 ICONS = {
     "loading": "audio-input-microphone-symbolic",
@@ -83,6 +83,7 @@ ICONS = {
     "done": "object-select-symbolic",
     "error": "dialog-warning-symbolic",
     "cancelled": "process-stop-symbolic",
+    "paused": "media-playback-pause-symbolic",
 }
 
 CSS_TEMPLATE = """
@@ -98,7 +99,7 @@ CSS_TEMPLATE = """
 }}
 .bar.working {{ background-color: #ffffff; }}
 .icon {{ color: {accent}; }}
-.icon.working, .icon.loading, .icon.cancelled {{ color: rgba(255, 255, 255, 0.65); }}
+.icon.working, .icon.loading, .icon.cancelled, .icon.paused {{ color: rgba(255, 255, 255, 0.65); }}
 .icon.error {{ color: {error}; }}
 .halo {{
     background-image: radial-gradient(circle, {accent} 0%, rgba(0, 0, 0, 0) 70%);

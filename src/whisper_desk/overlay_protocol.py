@@ -28,9 +28,9 @@ from __future__ import annotations
 import base64
 import binascii
 
-STATES = ("loading", "listening", "working", "done", "error", "cancelled")
+STATES = ("loading", "listening", "working", "done", "error", "cancelled", "paused")
 # States that end a dictation: the window stays up a moment to be read.
-FINAL_STATES = ("done", "error", "cancelled")
+FINAL_STATES = ("done", "error", "cancelled", "paused")
 EVENTS = ("cancel",)
 
 

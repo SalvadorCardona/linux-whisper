@@ -563,8 +563,49 @@
       <p>Once installed, updates go through the command itself: <code>whisper-desk update</code>.</p>
     </div>
 
+    <h3>First launch</h3>
+    <p>
+      A first installation ends on the welcome window: the microphone with a gauge that must move,
+      the language and the model, the download with its progress, then your shortcut and a first
+      dictation. <code>whisper-desk welcome</code> opens it again; <code>WD_NO_WELCOME=1</code> skips it.
+    </p>
+    <div class="shots">
+      <div class="shot">
+        <picture>
+          <source srcset="welcome-microphone.webp" type="image/webp">
+          <img src="welcome-microphone.png" alt="Welcome window: the microphone gauge" width="672" height="553" loading="lazy">
+        </picture>
+        <span>1 — the microphone</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="welcome-model.webp" type="image/webp">
+          <img src="welcome-model.png" alt="Welcome window: language and model" width="672" height="553" loading="lazy">
+        </picture>
+        <span>2 — language and model</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="welcome-download.webp" type="image/webp">
+          <img src="welcome-download.png" alt="Welcome window: the model download" width="672" height="553" loading="lazy">
+        </picture>
+        <span>3 — the download, with its progress</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="welcome-try.webp" type="image/webp">
+          <img src="welcome-try.png" alt="Welcome window: the shortcut and a first dictation" width="672" height="553" loading="lazy">
+        </picture>
+        <span>4 — your shortcut, a first dictation</span>
+      </div>
+    </div>
+
     <h3>Check that everything is in place</h3>
     <pre data-copy><span class="p">$ </span>whisper-desk doctor</pre>
+    <p>
+      Every line is <b>✓</b> (fine), <b>✗</b> (to fix) or <b>⚠</b> (optional), and every failure comes
+      with the command or the setting that fixes it.
+    </p>
 
     <h3>Updating</h3>
     <pre data-copy><span class="p">$ </span>whisper-desk update</pre>
@@ -600,7 +641,7 @@
 
     <h3>Uninstalling</h3>
     <pre data-copy><span class="p">$ </span>curl -LsSf https://raw.githubusercontent.com/SalvadorCardona/whisper-desk/main/uninstall.sh | sh</pre>
-    <p>Add <code>WD_PURGE=1</code> to remove the configuration and the history as well. Downloaded models stay in <code>~/.cache/huggingface</code>.</p>
+    <p>The menu entries and the tray icon go with it. Add <code>WD_PURGE=1</code> to remove the configuration and the history as well. Downloaded models stay in <code>~/.cache/huggingface</code>.</p>
   </div>
 </section>
 
@@ -640,9 +681,22 @@
 <span class="p">$ </span>whisper-desk update     <span class="c"># update the installation (--check to compare only)</span>
 <span class="p">$ </span>whisper-desk history    <span class="c"># past dictations — see below</span>
 <span class="p">$ </span>whisper-desk settings   <span class="c"># the settings window</span>
+<span class="p">$ </span>whisper-desk welcome    <span class="c"># the first-launch window, again</span>
+<span class="p">$ </span>whisper-desk tray       <span class="c"># the tray icon</span>
+<span class="p">$ </span>whisper-desk pause      <span class="c"># the shortcut is ignored until whisper-desk resume</span>
 <span class="p">$ </span>whisper-desk config     <span class="c"># open the configuration in $EDITOR</span>
 <span class="p">$ </span>whisper-desk reload     <span class="c"># reload the configuration without restarting</span>
 <span class="p">$ </span>whisper-desk quit       <span class="c"># stop the daemon</span></pre>
+
+    <h3>Tray icon</h3>
+    <p>
+      The icon says whether the service runs, with which model and which microphone, and holds a menu:
+      start or finish a dictation, <b>History…</b>, <b>Settings…</b>, <b>Pause dictation</b>, <b>Quit</b>.
+      It needs <code>gir1.2-ayatanaappindicator3-0.1</code> for the system Python.
+      <b>GNOME shows no tray icon by itself</b>: without the AppIndicator extension
+      (<code>gnome-shell-extension-appindicator</code>, on by default on Ubuntu) the icon has nowhere to go,
+      and <code>whisper-desk doctor</code> says so. Settings and History are then in the applications menu.
+    </p>
 
     <h3>History</h3>
     <p>
@@ -826,6 +880,8 @@ margin = <span class="n">96</span></pre>
           <tr><td><code>history_window.py</code></td><td>history window (GTK3, separate process)</td></tr>
           <tr><td><code>tomlwrite.py</code></td><td>writing <code>config.toml</code> while keeping its comments</td></tr>
           <tr><td><code>settings_window.py</code></td><td>settings window (GTK3, separate process)</td></tr>
+          <tr><td><code>welcome_window.py</code></td><td>first-launch window (GTK3, separate process)</td></tr>
+          <tr><td><code>tray_window.py</code></td><td>tray icon (AppIndicator, separate process)</td></tr>
           <tr><td><code>hotkey.py</code></td><td>global shortcut: GNOME, Start menu, <code>skhd</code></td></tr>
           <tr><td><code>service.py</code></td><td>daemon startup: systemd, launchd or direct</td></tr>
         </tbody>

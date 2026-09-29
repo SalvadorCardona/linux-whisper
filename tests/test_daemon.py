@@ -498,6 +498,55 @@ class InsertTest(DictationCase):
             self.assertIn("error", service.insert("  "))
 
 
+class PauseTest(DictationCase):
+    """Paused from the tray: the shortcut answers, and does not listen."""
+
+    def test_a_paused_shortcut_opens_no_microphone(self):
+        with self.service() as service, \
+                mock.patch.object(daemon.Service, "_show_paused") as shown:
+            service.pause()
+            self.assertEqual(service.toggle(), {"state": "paused"})
+            self.assertTrue(wait_until(lambda: shown.called))
+            self.assertIsNone(service.session)
+            self.assertFalse(self.recorder.listening.is_set())
+
+    def test_resume(self):
+        with self.service() as service:
+            service.pause()
+            service.resume()
+            self.assertEqual(service.toggle(), {"state": "recording"})
+
+    def test_the_pause_is_told_on_the_window(self):
+        windows: list[FakeOverlay] = []
+
+        def build(*args, **kwargs):
+            windows.append(FakeOverlay(*args, **kwargs))
+            return windows[-1]
+
+        with self.service() as service, mock.patch.object(daemon, "OverlayProcess", build):
+            service._show_paused()
+        self.assertEqual(windows[0].final[:2], ("paused", "whisper-desk is paused"))
+        self.assertTrue(windows[0].stopped)
+
+    def test_the_status_says_what_the_tray_shows(self):
+        with self.service() as service:
+            service.pause()
+            status = service.status()
+        self.assertEqual(status["microphone"], "default")
+        self.assertTrue(status["paused"])
+        self.assertIsNone(status["download"])
+
+
+class LoadTest(DictationCase):
+    def test_load_starts_the_model_in_the_background(self):
+        self.transcriber = ColdTranscriber()
+        with self.service() as service:
+            self.assertEqual(service.load(), {"loaded": False})
+            self.transcriber.arrived.set()
+            self.assertTrue(wait_until(lambda: self.transcriber.is_loaded))
+            self.assertEqual(service.load(), {"loaded": True})
+
+
 class LoadingTest(DictationCase):
     """A model still on its way is shown, and the microphone waits for it."""
 

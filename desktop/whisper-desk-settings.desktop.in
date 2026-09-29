@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=whisper-desk Settings
+Comment=Language, model, microphone and shortcut of the offline dictation
+Exec=@BIN@ settings
+Icon=audio-input-microphone
+Terminal=false
+Categories=Utility;Settings;
+Keywords=dictation;voice;speech;whisper;
