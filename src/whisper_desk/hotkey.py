@@ -34,7 +34,7 @@ class UnsupportedDesktop(RuntimeError):
 
 MODIFIER_NAMES = {
     "super": "super", "cmd": "super", "command": "super", "meta": "super",
-    "win": "super", "windows": "super",
+    "win": "super", "windows": "super", "mod4": "super",
     "ctrl": "ctrl", "control": "ctrl", "primary": "ctrl",
     "alt": "alt", "option": "alt", "opt": "alt",
     "shift": "shift",

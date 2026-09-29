@@ -300,11 +300,12 @@ class SettingsWindow(Gtk.Window):
             return True
         if event.keyval in MODIFIER_KEYS:
             return True
-        # X11 reports Mod4, the accelerator speaks of Super: the keymap translates.
-        keymap = Gdk.Keymap.get_for_display(self.get_display())
-        state = keymap.add_virtual_modifiers(event.state)
-        state = state[1] if isinstance(state, tuple) else state
-        modifiers = Gdk.ModifierType(state) & Gtk.accelerator_get_default_mod_mask()
+        # X11 reports the Super key as Mod4, which the accelerator mask
+        # leaves out: it is named Super before the mask is applied.
+        state = event.state
+        if state & Gdk.ModifierType.MOD4_MASK:
+            state |= Gdk.ModifierType.SUPER_MASK
+        modifiers = state & Gtk.accelerator_get_default_mod_mask()
         keyval = Gdk.keyval_to_lower(event.keyval)
         send({"action": "hotkey", "accel": Gtk.accelerator_name(keyval, modifiers)})
         return True

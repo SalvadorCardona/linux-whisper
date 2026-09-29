@@ -144,6 +144,14 @@ class ShortcutTest(ControllerCase):
     def test_a_bare_letter_is_not_a_shortcut(self):
         self.assertIn("status", self.controller.shortcut("j"))
 
+    def test_shift_alone_is_not_enough(self):
+        """Shift+A as a global shortcut would swallow every capital A."""
+        self.assertIn("status", self.controller.shortcut("<Shift>a"))
+
+    def test_mod4_is_the_super_key(self):
+        with forced_host(host.LINUX):
+            self.assertEqual(self.controller.shortcut("<Mod4>j")["hotkey"]["binding"], "<Super>j")
+
     def test_a_function_key_alone_is(self):
         self.assertEqual(self.controller.shortcut("F9")["hotkey"]["binding"], "f9")
 

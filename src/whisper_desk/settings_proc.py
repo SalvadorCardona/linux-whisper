@@ -224,8 +224,9 @@ class SettingsController:
             modifiers, key = hotkey.parse_binding(accel)
             if not key:
                 return {"status": "Press a key along with the modifiers"}
-            if not modifiers and not re.fullmatch(r"f\d{1,2}", key):
-                return {"status": "A shortcut needs Ctrl, Alt, Shift or Super — or a function key"}
+            # Shift alone would take a capital letter away from every application.
+            if not set(modifiers) - {"shift"} and not re.fullmatch(r"f\d{1,2}", key):
+                return {"status": "A shortcut needs Ctrl, Alt or Super — or a function key"}
             binding = hotkey.format_gtk(modifiers, key)
         resolved = hotkey.resolve_binding({"hotkey": {"binding": binding}})
         return {"hotkey": {"binding": binding, "label": hotkey.label(resolved)}}
