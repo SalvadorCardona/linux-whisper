@@ -260,8 +260,7 @@ Every dictation is kept — date, listening time, model and text — in
 `~/.local/state/whisper-desk/history.jsonl`, one JSON line per dictation. A text lost on
 the way (a window that lost the focus, an insertion that failed) can be found again,
 copied or typed again. The `history.log` of earlier versions is still read, and folded
-into the new file the first time the history is rewritten (it is kept as
-`history.log.bak`).
+into the new file the first time the history is rewritten.
 
 ```sh
 whisper-desk history                  # the 20 latest, numbered from 1 (the latest)

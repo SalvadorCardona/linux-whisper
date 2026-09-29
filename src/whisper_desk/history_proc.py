@@ -42,16 +42,16 @@ class HistoryController:
             message["status"] = status
         return message
 
-    def _find(self, request: dict[str, Any]) -> tuple[int, history.Entry] | None:
+    def _find(self, request: dict[str, Any]) -> history.Entry | None:
         """The entry the window meant — checked by its date, in case the file moved."""
         entries = history.load()
         index = request.get("id")
         if isinstance(index, int) and 0 <= index < len(entries):
             if entries[index].date == request.get("date"):
-                return index, entries[index]
-        for position, entry in enumerate(entries):
+                return entries[index]
+        for entry in entries:
             if entry.date == request.get("date"):
-                return position, entry
+                return entry
         return None
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any] | None:
@@ -68,16 +68,16 @@ class HistoryController:
             )
             return self.snapshot(status)
 
-        found = self._find(request)
-        if found is None:
+        entry = self._find(request)
+        if entry is None:
             return self.snapshot("This dictation is no longer in the history")
-        index, entry = found
         if action == "copy":
             copied = self.copy(entry.text)
             return self.snapshot("Copied to the clipboard" if copied else "Could not copy")
         if action == "delete":
-            history.delete(index)
-            return self.snapshot("Dictation deleted")
+            deleted = history.delete(entry)
+            return self.snapshot("Dictation deleted" if deleted else
+                                 "This dictation is no longer in the history")
         if action == "insert":
             try:
                 reply = self.send("insert", timeout=10, text=entry.text)

@@ -3,7 +3,8 @@
 ~/.local/state/whisper-desk/history.jsonl holds the date, the duration, the
 model and the text of each dictation. The old history.log — one sentence per
 line, "date<TAB>text" — is still read; it is folded into the new file the
-first time the history is rewritten (a deletion, a purge).
+first time the history is rewritten (a deletion, a purge), then removed: a
+copy left aside would keep what the user asked to delete.
 """
 
 from __future__ import annotations
@@ -25,8 +26,6 @@ logger = logging.getLogger("whisper-desk.history")
 
 FILE_NAME = "history.jsonl"
 LEGACY_NAME = "history.log"
-# Where the old log goes once folded in: kept, never silently deleted.
-LEGACY_BACKUP = "history.log.bak"
 
 
 @dataclass
@@ -142,17 +141,24 @@ def save(entries: list[Entry]) -> None:
             handle.write(json.dumps(asdict(entry), ensure_ascii=False) + "\n")
     # Written aside then swapped in: a crash leaves the old file, not half of it.
     os.replace(temporary, path())
-    if legacy_path().exists():
-        legacy_path().replace(config_module.STATE_DIR / LEGACY_BACKUP)
+    # Its entries now live in the new file, which was just written in full.
+    legacy_path().unlink(missing_ok=True)
 
 
-def delete(index: int) -> Entry:
-    """Removes a dictation, by its index in load()."""
+def delete(entry: Entry) -> bool:
+    """Removes this dictation — found again under the lock, by its date and text.
+
+    An index read earlier may have slid since: the daemon purges as it
+    records, and the dictation shown as number 3 would no longer be the one.
+    """
     with _locked():
         entries = load()
-        removed = entries.pop(index)
-        save(entries)
-    return removed
+        for position, candidate in enumerate(entries):
+            if candidate.date == entry.date and candidate.text == entry.text:
+                del entries[position]
+                save(entries)
+                return True
+    return False
 
 
 def clear() -> int:

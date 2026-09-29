@@ -181,8 +181,10 @@ def cmd_history(args: argparse.Namespace) -> int:
         print(f"Copied: {entry.text}")
         return 0
     if args.delete is not None:
-        removed = history.delete(history.index_of(args.delete, entries))
-        print(f"Deleted: {removed.text}")
+        entry = entries[history.index_of(args.delete, entries)]
+        if not history.delete(entry):
+            return _print_error("that dictation is no longer in the history")
+        print(f"Deleted: {entry.text}")
         return 0
 
     query = " ".join(args.query)

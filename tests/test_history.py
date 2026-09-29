@@ -83,13 +83,21 @@ class LegacyTest(HistoryCase):
         history.append("new", now=NOW)
         self.assertEqual([entry.text for entry in history.load()], ["old", "new"])
 
-    def test_a_rewrite_folds_the_old_log_in_and_keeps_a_copy(self):
+    def test_a_rewrite_folds_the_old_log_in(self):
         self.legacy("2026-09-20T09:14:02\told", "2026-09-21T09:14:02\tolder not")
         history.append("new", now=NOW)
-        history.delete(0)
+        history.delete(history.load()[0])
         self.assertFalse(history.legacy_path().exists())
-        self.assertTrue((config_module.STATE_DIR / history.LEGACY_BACKUP).exists())
         self.assertEqual([entry.text for entry in history.load()], ["older not", "new"])
+
+    def test_clearing_leaves_no_copy_of_the_old_log(self):
+        """What the user asked to delete must not survive in plain text aside."""
+        self.legacy("2026-09-20T09:14:02\ta private sentence")
+        history.clear()
+        leftovers = [path.name for path in config_module.STATE_DIR.iterdir()
+                     if path.name != "history.lock"]
+        self.assertEqual(leftovers, [history.FILE_NAME])
+        self.assertNotIn("private", history.path().read_text(encoding="utf-8"))
 
 
 class EditTest(HistoryCase):
@@ -99,9 +107,14 @@ class EditTest(HistoryCase):
             history.append(text, now=NOW - timedelta(days=days))
 
     def test_delete(self):
-        removed = history.delete(1)
-        self.assertEqual(removed.text, "three days ago")
+        self.assertTrue(history.delete(history.load()[1]))
         self.assertEqual([entry.text for entry in history.load()], ["a month ago", "today"])
+
+    def test_a_dictation_already_gone_is_not_someone_else(self):
+        gone = history.load()[0]
+        history.purge(30, now=NOW)
+        self.assertFalse(history.delete(gone))
+        self.assertEqual(len(history.load()), 2)
 
     def test_clear(self):
         self.assertEqual(history.clear(), 3)
@@ -139,7 +152,7 @@ class ConcurrencyTest(HistoryCase):
         recorder.start()
         start.wait()
         for _ in range(25):
-            history.delete(0)
+            history.delete(history.load()[0])
         recorder.join()
         texts = [entry.text for entry in history.load()]
         self.assertEqual(sum(text.startswith("new") for text in texts), 50)
