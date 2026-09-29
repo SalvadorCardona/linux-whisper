@@ -151,9 +151,13 @@ class ConcurrencyTest(HistoryCase):
         recorder = threading.Thread(target=record)
         recorder.start()
         start.wait()
-        for _ in range(25):
-            history.delete(history.load()[0])
-        recorder.join()
+        try:
+            for _ in range(25):
+                history.delete(history.load()[0])
+        finally:
+            # Joined whatever happens: once the test is over, STATE_DIR is the
+            # user's own again, and a late append would land there.
+            recorder.join()
         texts = [entry.text for entry in history.load()]
         self.assertEqual(sum(text.startswith("new") for text in texts), 50)
         self.assertEqual(sum(text.startswith("old") for text in texts), 25)
