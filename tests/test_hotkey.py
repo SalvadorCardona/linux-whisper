@@ -36,6 +36,19 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(hotkey.format_gtk(*hotkey.parse_binding("<Ctrl><Alt>j")), "<Ctrl><Alt>j")
 
 
+class LabelTest(unittest.TestCase):
+    """The shortcut as the overlay tells it: the way it reads on the keyboard."""
+
+    def test_gtk_syntax_becomes_keycaps(self):
+        with forced_host(host.LINUX):
+            self.assertEqual(hotkey.label("<Super>j"), "Super+J")
+            self.assertEqual(hotkey.label("<Ctrl><Alt>space"), "Ctrl+Alt+Space")
+
+    def test_a_mac_keyboard_says_cmd(self):
+        with forced_host(host.MACOS):
+            self.assertEqual(hotkey.label("<Super><Alt>d"), "Option+Cmd+D")
+
+
 class DefaultBindingTest(unittest.TestCase):
     def test_wsl_avoids_the_windows_key(self):
         with forced_host(host.WSL):

@@ -487,17 +487,52 @@
     <div class="shots">
       <div class="shot">
         <picture>
-          <source srcset="overlay-listening.webp" type="image/webp">
-          <img src="overlay-listening.png" alt="The whisper-desk overlay while listening" width="336" height="120" loading="lazy">
+          <source srcset="overlay-loading.webp" type="image/webp">
+          <img src="overlay-loading.png" alt="The whisper-desk overlay while the model downloads" width="267" height="110" loading="lazy">
         </picture>
-        <span>While listening</span>
+        <span>Loading — the model arrives, with its gauge</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-listening.webp" type="image/webp">
+          <img src="overlay-listening.png" alt="The whisper-desk overlay while listening" width="262" height="110" loading="lazy">
+        </picture>
+        <span>Listening — how to finish or cancel, below</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-live.webp" type="image/webp">
+          <img src="overlay-live.png" alt="The whisper-desk overlay showing the sentence just transcribed" width="408" height="110" loading="lazy">
+        </picture>
+        <span>As you go — the last sentence, live</span>
       </div>
       <div class="shot">
         <picture>
           <source srcset="overlay-working.webp" type="image/webp">
-          <img src="overlay-working.png" alt="The whisper-desk overlay while transcribing" width="336" height="120" loading="lazy">
+          <img src="overlay-working.png" alt="The whisper-desk overlay while transcribing" width="262" height="110" loading="lazy">
         </picture>
-        <span>While transcribing</span>
+        <span>Transcribing</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-done.webp" type="image/webp">
+          <img src="overlay-done.png" alt="The whisper-desk overlay after a successful dictation" width="408" height="110" loading="lazy">
+        </picture>
+        <span>Done — the beginning of the text inserted</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-error.webp" type="image/webp">
+          <img src="overlay-error.png" alt="The whisper-desk overlay after a dictation that heard nothing" width="408" height="110" loading="lazy">
+        </picture>
+        <span>Error — a short reason, and what to do</span>
+      </div>
+      <div class="shot">
+        <picture>
+          <source srcset="overlay-cancelled.webp" type="image/webp">
+          <img src="overlay-cancelled.png" alt="The whisper-desk overlay after a cancelled dictation" width="408" height="110" loading="lazy">
+        </picture>
+        <span>Cancelled — Esc, a click or the shortcut</span>
       </div>
     </div>
   </div>
@@ -585,6 +620,7 @@
           <tr><td><kbd>Super</kbd> + <kbd>J</kbd> (again)</td><td>stops listening immediately</td></tr>
           <tr><td><kbd>Super</kbd> + <kbd>J</kbd> (once more)</td><td>cuts the dictation off: what is left is neither transcribed nor inserted</td></tr>
           <tr><td><kbd>Super</kbd> + <kbd>J</kbd> (again and again)</td><td>gives up: the window closes, the microphone is released, the daemon is free</td></tr>
+          <tr><td><kbd>Esc</kbd>, or a click on the overlay</td><td>cancels the dictation — a click on a finished state dismisses it</td></tr>
         </tbody>
       </table>
     </div>
@@ -740,6 +776,7 @@ margin = <span class="n">96</span></pre>
           <tr><td><code>inject.py</code></td><td>simulated keystroke: <code>uinput</code>, SendKeys, System Events</td></tr>
           <tr><td><code>output.py</code></td><td>insertion at the cursor, clipboard, notifications</td></tr>
           <tr><td><code>overlay.py</code></td><td>X11 overlay (separate process)</td></tr>
+          <tr><td><code>overlay_protocol.py</code></td><td>the line protocol between the daemon and the overlay</td></tr>
           <tr><td><code>hotkey.py</code></td><td>global shortcut: GNOME, Start menu, <code>skhd</code></td></tr>
           <tr><td><code>service.py</code></td><td>daemon startup: systemd, launchd or direct</td></tr>
         </tbody>

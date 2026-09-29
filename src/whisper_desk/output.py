@@ -207,6 +207,8 @@ class CursorWriter:
         self.clipboard = Clipboard(overlay)
         self.keyboard = keyboard(str(self.settings["keyboard"]))
         self.shortcut = resolve_shortcut(str(self.settings["paste_shortcut"]))
+        # Why the last insertion failed: "clipboard", "keyboard", or "" if it did not.
+        self.failure = ""
 
     def prepare(self) -> None:
         """Creates the virtual keyboard ahead of time: the compositor takes ~0.6 s to see it."""
@@ -219,6 +221,7 @@ class CursorWriter:
             self.clipboard.save()
         if not self.clipboard.set(text):
             logger.warning("Text not copied: insertion impossible.")
+            self.failure = "clipboard"
             return False
         # wl-copy takes ownership of the selection in a detached process:
         # pasting too early would paste the previous content.
@@ -227,8 +230,10 @@ class CursorWriter:
             logger.warning(
                 "Virtual keyboard unavailable: the text stays in the clipboard."
             )
+            self.failure = "keyboard"
             return False
         time.sleep(PASTE_SETTLE_SECONDS)
+        self.failure = ""
         return True
 
     def close(self) -> None:
@@ -291,15 +296,20 @@ def modes(config: dict[str, Any]) -> set[str]:
 
 
 def deliver(text: str, config: dict[str, Any], writer: CursorWriter | None = None,
-            overlay: Any = None) -> None:
-    """Applies the configured output modes to the transcribed text."""
+            overlay: Any = None) -> bool:
+    """Applies the configured output modes to the transcribed text.
+
+    False if the text could not be put where it was asked for: the dictation
+    then ends on an error the user can see, rather than on nothing at all.
+    """
     settings = config["output"]
     selected = modes(config)
+    delivered = True
 
     if "cursor" in selected and writer is not None:
-        writer.write(text)
+        delivered = writer.write(text) and delivered
     if "clipboard" in selected:
-        copy(text, overlay=overlay)
+        delivered = copy(text, overlay=overlay) and delivered
     if "stdout" in selected:
         print(text, flush=True)
     if settings["history"]:
@@ -307,3 +317,4 @@ def deliver(text: str, config: dict[str, Any], writer: CursorWriter | None = Non
     if settings["notify"]:
         preview = text if len(text) <= 140 else text[:139] + "…"
         notify("Transcription", preview)
+    return delivered

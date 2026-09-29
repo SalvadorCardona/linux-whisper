@@ -84,6 +84,14 @@ def resolve_binding(config: dict[str, Any]) -> str:
     return default_binding() if not binding or binding.lower() == "auto" else binding
 
 
+def label(binding: str) -> str:
+    """"<Super>j" → "Super+J": the shortcut as the user reads it on their keyboard."""
+    modifiers, key = parse_binding(binding)
+    keycaps = {"super": "Cmd", "alt": "Option"} if host.is_macos() else {}
+    names = [keycaps.get(modifier, modifier.capitalize()) for modifier in modifiers]
+    return "+".join([*names, key.upper() if len(key) == 1 else key.capitalize()])
+
+
 # -- GNOME --------------------------------------------------------------------
 
 def _gsettings(*args: str) -> str:

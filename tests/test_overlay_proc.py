@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import threading
+import time
 import unittest
 
 from . import context  # noqa: F401
 
+from whisper_desk import overlay_protocol as protocol
 from whisper_desk.overlay_proc import OverlayProcess
 
 CONFIG = {
@@ -43,16 +46,23 @@ class FakeStdin:
 
 
 class FakeProcess:
-    def __init__(self, stdin: FakeStdin, returncode=None):
+    def __init__(self, stdin: FakeStdin, returncode=None, stdout: bytes = b""):
         self.stdin = stdin
+        self.stdout = io.BytesIO(stdout)
         self.returncode = returncode
         self.terminated = False
         self.killed = False
+        # A window lingering on its final state: wait() holds until released.
+        self.exited = threading.Event()
+        self.exited.set()
 
     def poll(self):
         return self.returncode
 
     def wait(self, timeout=None) -> int:
+        if not self.exited.wait(timeout):
+            import subprocess
+            raise subprocess.TimeoutExpired("overlay", timeout)
         return 0
 
     def terminate(self) -> None:
@@ -98,6 +108,40 @@ class SendTest(unittest.TestCase):
         overlay.set_level(1 / 3)
         self.assertEqual(stdin.lines, [b"level 0.333\n"])
 
+    def test_a_final_state_carries_its_words(self):
+        stdin = FakeStdin()
+        overlay, _ = attached(stdin)
+        overlay.set_state("error", "Nothing heard", "Nothing was said within 8 s")
+        command, args = protocol.parse(stdin.lines[0].decode())
+        self.assertEqual(command, "state")
+        self.assertEqual(args, ("error", "Nothing heard", "Nothing was said within 8 s"))
+
+    def test_a_bare_state_stays_a_bare_line(self):
+        """What an older window reads must not change for the old states."""
+        stdin = FakeStdin()
+        overlay, _ = attached(stdin)
+        overlay.set_state("listening")
+        overlay.set_state("done", "text only")
+        self.assertEqual(stdin.lines[0], b"state listening\n")
+        self.assertEqual(protocol.parse(stdin.lines[1].decode()), ("state", ("done", "text only", "")))
+
+    def test_the_live_text_and_the_hint_travel_as_base64(self):
+        stdin = FakeStdin()
+        overlay, _ = attached(stdin)
+        overlay.set_text("a sentence, with spaces")
+        overlay.set_hint("Super+J to finish")
+        self.assertEqual(
+            [protocol.parse(line.decode()) for line in stdin.lines],
+            [("text", ("a sentence, with spaces",)), ("hint", ("Super+J to finish",))],
+        )
+
+    def test_the_progress_is_bounded(self):
+        stdin = FakeStdin()
+        overlay, _ = attached(stdin)
+        overlay.set_progress(0.4219)
+        overlay.set_progress(1.7)
+        self.assertEqual(stdin.lines, [b"progress 0.422\n", b"progress 1.000\n"])
+
     def test_the_copied_text_travels_as_base64_on_one_line(self):
         stdin = FakeStdin()
         overlay, _ = attached(stdin)
@@ -105,6 +149,58 @@ class SendTest(unittest.TestCase):
         self.assertEqual(len(stdin.lines), 1)
         self.assertTrue(stdin.lines[0].startswith(b"copy "))
         self.assertEqual(stdin.lines[0].count(b"\n"), 1)
+
+
+class ProtocolTest(unittest.TestCase):
+    """What the window makes of a line: a malformed one is dropped, never guessed."""
+
+    def test_every_state_is_understood(self):
+        for state in protocol.STATES:
+            self.assertEqual(protocol.parse(f"state {state}"), ("state", (state, "", "")))
+
+    def test_an_unknown_state_is_dropped(self):
+        self.assertIsNone(protocol.parse("state dancing"))
+
+    def test_the_level_and_its_bands(self):
+        self.assertEqual(protocol.parse("level 0.5 0.25 0.75"), ("level", (0.5, [0.25, 0.75])))
+
+    def test_values_are_brought_back_into_range(self):
+        self.assertEqual(protocol.parse("level 3 -1"), ("level", (1.0, [0.0])))
+        self.assertEqual(protocol.parse("progress -0.5"), ("progress", (0.0,)))
+
+    def test_garbage_is_dropped(self):
+        for line in ("", "   ", "level", "level abc", "progress nan", "text", "text !!notbase64",
+                     "state error !!", "copy", "wave 1", "state"):
+            self.assertIsNone(protocol.parse(line), line)
+
+    def test_words_survive_the_trip(self):
+        text = "Déjà-vu — «quote» \t with\nbreaks"
+        self.assertEqual(protocol.parse(f"text {protocol.encode(text)}"), ("text", (text,)))
+
+    def test_bare_commands(self):
+        for command in ("quit", "saveclip", "restoreclip"):
+            self.assertEqual(protocol.parse(command), (command, ()))
+
+
+class EventTest(unittest.TestCase):
+    """The window answers on its stdout: Esc or a click cancels the dictation."""
+
+    def test_a_cancel_from_the_window_reaches_the_dictation(self):
+        events: list[str] = []
+        overlay = OverlayProcess(CONFIG, on_event=events.append)
+        overlay._read_events(FakeProcess(FakeStdin(), stdout=b"cancel\n"))
+        self.assertEqual(events, ["cancel"])
+
+    def test_unknown_words_from_the_window_are_ignored(self):
+        events: list[str] = []
+        overlay = OverlayProcess(CONFIG, on_event=events.append)
+        overlay._read_events(
+            FakeProcess(FakeStdin(), stdout=b"Gtk-WARNING something\n\ncancel\n")
+        )
+        self.assertEqual(events, ["cancel"])
+
+    def test_nobody_listening_is_not_an_error(self):
+        OverlayProcess(CONFIG)._read_events(FakeProcess(FakeStdin(), stdout=b"cancel\n"))
 
 
 class BrokenPipeTest(unittest.TestCase):
@@ -152,6 +248,23 @@ class StopTest(unittest.TestCase):
         overlay.stop()
         overlay.stop()  # does not raise
         self.assertFalse(overlay.alive)
+
+    def test_stopping_does_not_wait_for_the_final_state_to_be_read(self):
+        """The window lingers on "done" for a second: the daemon is free at once."""
+        overlay, process = attached(FakeStdin())
+        process.exited.clear()
+        started = time.monotonic()
+        overlay.stop()
+        self.assertLess(time.monotonic() - started, 0.5)
+        process.exited.set()
+
+    def test_a_new_window_takes_the_place_of_a_lingering_one(self):
+        overlay, process = attached(FakeStdin())
+        process.exited.clear()
+        overlay.stop()
+        OverlayProcess._dismiss_lingering()
+        self.assertTrue(process.terminated)
+        process.exited.set()
 
     def test_a_dead_process_is_no_longer_alive(self):
         overlay = OverlayProcess(CONFIG)

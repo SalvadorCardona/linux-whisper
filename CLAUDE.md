@@ -80,6 +80,8 @@ le dupliquer ici.
 - **L'overlay tourne hors du venv.** `overlay.py` et `overlay_proc.py` s'exécutent
   avec le Python système (celui qui a PyGObject), jamais avec celui du venv : ne pas
   leur ajouter de dépendance qui ne serait installée que côté venv.
+- **`overlay_protocol.py` est importé par `overlay.py` comme un script voisin**, pas
+  comme un module du package : stdlib seule, et aucun import relatif.
 - **Le raccourci clavier installé une première fois n'est jamais réécrit** par
   `whisper-desk update` : ne pas modifier ce comportement en passant par une autre
   tâche.

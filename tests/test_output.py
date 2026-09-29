@@ -95,6 +95,31 @@ class ShortcutTest(unittest.TestCase):
         self.assertEqual(parse_shortcut("++"), [])
 
 
+class DeliverTest(unittest.TestCase):
+    """The dictation must know when its text went nowhere, to say so."""
+
+    CONFIG = {"output": {"mode": "clipboard", "history": False, "notify": False}}
+
+    def test_a_copied_text_is_delivered(self):
+        with mock.patch.object(output, "copy", lambda text, overlay=None: True):
+            self.assertTrue(output.deliver("text", self.CONFIG))
+
+    def test_a_clipboard_that_refuses_is_a_failure(self):
+        with mock.patch.object(output, "copy", lambda text, overlay=None: False):
+            self.assertFalse(output.deliver("text", self.CONFIG))
+
+    def test_the_writer_tells_why_it_failed(self):
+        writer = output.CursorWriter.__new__(output.CursorWriter)
+        writer.settings = {"restore_clipboard": False}
+        writer.clipboard = mock.Mock(set=lambda text: True)
+        writer.keyboard = mock.Mock(press=lambda shortcut: False)
+        writer.shortcut = ["ctrl", "v"]
+        writer.failure = ""
+        with mock.patch.object(output.time, "sleep"):
+            self.assertFalse(writer.write("text"))
+        self.assertEqual(writer.failure, "keyboard")
+
+
 class ClipboardTest(unittest.TestCase):
     """The clipboard goes through the host's tool, without ever trying them all."""
 

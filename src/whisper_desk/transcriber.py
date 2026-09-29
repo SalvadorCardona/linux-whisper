@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import subprocess
+import threading
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("whisper-desk.transcriber")
@@ -39,6 +42,84 @@ FILLERS = frozenset({
 })
 
 
+# Hugging Face repositories of the models faster-whisper knows by name, for
+# when faster-whisper itself cannot be asked (it is imported lazily).
+REPOSITORIES = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large-v1": "Systran/faster-whisper-large-v1",
+    "large-v2": "Systran/faster-whisper-large-v2",
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "large": "Systran/faster-whisper-large-v3",
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "distil-large-v3": "Systran/faster-distil-whisper-large-v3",
+}
+# Download size of each model, in bytes. The hub announces no total before the
+# download starts: an approximate gauge beats a spinner that says nothing.
+MODEL_BYTES = {
+    "tiny": 75e6,
+    "base": 145e6,
+    "small": 484e6,
+    "medium": 1.53e9,
+    "large-v1": 3.09e9,
+    "large-v2": 3.09e9,
+    "large-v3": 3.09e9,
+    "large": 3.09e9,
+    "large-v3-turbo": 1.62e9,
+    "turbo": 1.62e9,
+    "distil-large-v3": 1.51e9,
+}
+
+
+def _hub_cache() -> Path:
+    """Where huggingface_hub puts the models, following its own variables."""
+    for variable in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        if os.environ.get(variable):
+            return Path(os.environ[variable])
+    if os.environ.get("HF_HOME"):
+        return Path(os.environ["HF_HOME"]) / "hub"
+    cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(cache) / "huggingface" / "hub"
+
+
+def _model_dir(name: str) -> Path | None:
+    repository = REPOSITORIES.get(name.removesuffix(".en")) if "/" not in name else name
+    if repository is None:
+        return None
+    if name.endswith(".en") and "/" not in name:
+        repository += ".en"
+    return _hub_cache() / ("models--" + repository.replace("/", "--"))
+
+
+def is_downloaded(name: str) -> bool:
+    """Is this model already on disk? A local path always is."""
+    if Path(name).is_dir():
+        return True
+    directory = _model_dir(name)
+    if directory is None:
+        return True  # unknown to us: nothing to say about its download
+    return any((directory / "snapshots").glob("*/model.bin"))
+
+
+def download_progress(name: str) -> float | None:
+    """How far the download of a model has got, 0..1; None if it cannot be told."""
+    directory = _model_dir(name)
+    total = MODEL_BYTES.get(name.removesuffix(".en"))
+    if directory is None or not total:
+        return None
+    try:
+        done = sum(
+            blob.stat().st_size for blob in (directory / "blobs").iterdir() if blob.is_file()
+        )
+    except OSError:
+        return 0.0
+    # The size is an estimate: the gauge never claims to be finished early.
+    return min(done / total, 0.99)
+
+
 def _normalise(text: str) -> str:
     """The text reduced to what makes it comparable: no case, no punctuation."""
     return text.strip().strip(""" .!?…«»"'-–—""").lower()
@@ -70,6 +151,8 @@ class Transcriber:
     def __init__(self, config: dict[str, Any]):
         self.config = config["model"]
         self._model = None
+        # The preload at start-up and a first dictation may ask at the same time.
+        self._loading = threading.Lock()
         # Target values, known even before the model is loaded.
         self.model_name, self.device, self.compute_type = self._resolve()
 
@@ -91,7 +174,18 @@ class Transcriber:
     def is_loaded(self) -> bool:
         return self._model is not None
 
+    @property
+    def is_downloaded(self) -> bool:
+        return is_downloaded(self.model_name)
+
+    def download_progress(self) -> float | None:
+        return download_progress(self.model_name)
+
     def load(self) -> None:
+        with self._loading:
+            self._load()
+
+    def _load(self) -> None:
         if self._model is not None:
             return
         from faster_whisper import WhisperModel
