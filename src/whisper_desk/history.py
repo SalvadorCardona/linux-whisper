@@ -8,10 +8,13 @@ first time the history is rewritten (a deletion, a purge).
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import logging
 import os
 import unicodedata
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -47,6 +50,19 @@ def path() -> Path:
 
 def legacy_path() -> Path:
     return config_module.STATE_DIR / LEGACY_NAME
+
+
+@contextlib.contextmanager
+def _locked() -> Iterator[None]:
+    """One writer at a time: the daemon appending, a window rewriting.
+
+    Without it, a dictation recorded between the reading and the rewriting
+    of a deletion would vanish with the old file.
+    """
+    config_module.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    with (config_module.STATE_DIR / "history.lock").open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
 
 
 def _read_legacy() -> list[Entry]:
@@ -104,8 +120,7 @@ def append(text: str, duration: float | None = None, model: str | None = None,
         model=model,
     )
     try:
-        config_module.STATE_DIR.mkdir(parents=True, exist_ok=True)
-        with path().open("a", encoding="utf-8") as handle:
+        with _locked(), path().open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(asdict(entry), ensure_ascii=False) + "\n")
     except OSError as error:
         logger.warning("History not written: %s", error)
@@ -116,7 +131,10 @@ def append(text: str, duration: float | None = None, model: str | None = None,
 
 
 def save(entries: list[Entry]) -> None:
-    """Rewrites the whole history — the old log included, folded in for good."""
+    """Rewrites the whole history — the old log included, folded in for good.
+
+    To be called under _locked(), with entries read under the same lock.
+    """
     config_module.STATE_DIR.mkdir(parents=True, exist_ok=True)
     temporary = path().with_suffix(".jsonl.tmp")
     with temporary.open("w", encoding="utf-8") as handle:
@@ -130,15 +148,17 @@ def save(entries: list[Entry]) -> None:
 
 def delete(index: int) -> Entry:
     """Removes a dictation, by its index in load()."""
-    entries = load()
-    removed = entries.pop(index)
-    save(entries)
+    with _locked():
+        entries = load()
+        removed = entries.pop(index)
+        save(entries)
     return removed
 
 
 def clear() -> int:
-    entries = load()
-    save([])
+    with _locked():
+        entries = load()
+        save([])
     return len(entries)
 
 
@@ -147,11 +167,12 @@ def purge(keep_days: int, now: datetime | None = None) -> int:
     if keep_days <= 0:
         return 0
     limit = (now or datetime.now()) - timedelta(days=keep_days)
-    entries = load()
-    kept = [entry for entry in entries if entry.when is None or entry.when >= limit]
-    if len(kept) == len(entries):
-        return 0
-    save(kept)
+    with _locked():
+        entries = load()
+        kept = [entry for entry in entries if entry.when is None or entry.when >= limit]
+        if len(kept) == len(entries):
+            return 0
+        save(kept)
     return len(entries) - len(kept)
 
 

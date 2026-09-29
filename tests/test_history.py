@@ -121,6 +121,31 @@ class EditTest(HistoryCase):
                          ["three days ago", "today", "now"])
 
 
+class ConcurrencyTest(HistoryCase):
+    def test_a_dictation_recorded_during_a_deletion_survives(self):
+        """The daemon appends while the window rewrites: neither wins over the other."""
+        import threading
+
+        for index in range(50):
+            history.append(f"old {index}", now=NOW - timedelta(days=1, seconds=index))
+        start = threading.Barrier(2)
+
+        def record():
+            start.wait()
+            for index in range(50):
+                history.append(f"new {index}", now=NOW + timedelta(seconds=index))
+
+        recorder = threading.Thread(target=record)
+        recorder.start()
+        start.wait()
+        for _ in range(25):
+            history.delete(0)
+        recorder.join()
+        texts = [entry.text for entry in history.load()]
+        self.assertEqual(sum(text.startswith("new") for text in texts), 50)
+        self.assertEqual(sum(text.startswith("old") for text in texts), 25)
+
+
 class SearchTest(unittest.TestCase):
     def entry(self, text: str) -> history.Entry:
         return history.Entry(date="2026-09-29T10:00:00", text=text)
